@@ -102,6 +102,58 @@ export function projectLabel(project) {
   return m ? m[1] : s;
 }
 
+/**
+ * Migrate legacy hash-suffixed project directories (ZCode-style
+ * `<name>-<16hex>`) to their friendly keys so imported memories match the
+ * workspace slugs a user would pick in the UI. When the friendly project
+ * already exists, memory files are merged (existing names win). The `project`
+ * frontmatter field of every moved memory is rewritten to the new key, and
+ * affected projects' indexes are regenerated. Idempotent and cheap.
+ *
+ * @returns {{ moved: number, merged: number }}
+ */
+export async function migrateProjectKeys(home) {
+  const root = join(memoriesRoot(home), "projects");
+  const result = { moved: 0, merged: 0 };
+  if (!existsSync(root)) return result;
+  const dirs = (await readdir(root, { withFileTypes: true })).filter((d) => d.isDirectory());
+  const affected = new Set();
+  for (const d of dirs) {
+    const m = /^(.+?)-[0-9a-fA-F]{16}$/.exec(d.name);
+    if (!m) continue;
+    const friendly = sanitizeSegment(m[1], "");
+    if (!friendly || friendly === d.name) continue;
+    const srcDir = join(root, d.name);
+    const srcMem = join(srcDir, "memory");
+    if (!existsSync(srcMem)) continue;
+    const dstMem = memoryDir(home, friendly);
+    await mkdir(dstMem, { recursive: true });
+    const files = (await readdir(srcMem)).filter((f) => f.endsWith(".md"));
+    for (const f of files) {
+      const target = join(dstMem, f);
+      if (existsSync(target)) {
+        result.merged += 1;
+        continue;
+      }
+      const p = join(srcMem, f);
+      const text = await readFile(p, "utf8");
+      const { fields, body } = parseFrontmatter(text);
+      const st = await stat(p);
+      const entry = normalizeEntry(fields, body, st.mtimeMs);
+      const stored = { ...entry, project: friendly };
+      await writeFile(target, serializeMemory(stored), "utf8");
+      result.moved += 1;
+    }
+    await rm(srcDir, { recursive: true, force: true });
+    affected.add(friendly);
+  }
+  for (const key of affected) {
+    const entries = (await listMemories(home)).filter((e) => e.project === key);
+    await writeIndexes(home, key, entries);
+  }
+  return result;
+}
+
 /** YAML-safe scalar: numbers pass through, risky strings get double-quoted. */
 export function yamlScalar(value) {
   if (typeof value === "number") return String(value);
@@ -393,7 +445,12 @@ export async function buildListPayload(home, { query = "", project, type } = {})
   const byType = {};
   for (const t of MEMORY_TYPES) byType[t] = typeCounts[t] || 0;
 
-  return { items, projects, stats: { total: all.length, byType } };
+  const labeledItems = items.map((m) => ({
+    ...m,
+    label: m.project === GLOBAL_PROJECT ? "全局" : projectLabel(m.project),
+  }));
+
+  return { items: labeledItems, projects, stats: { total: all.length, byType } };
 }
 
 /**

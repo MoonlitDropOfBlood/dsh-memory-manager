@@ -162,6 +162,30 @@ try {
     core.writeMemory(HOME, { name: "   ", project: "global", body: "x" })
   );
 
+  section("migrateProjectKeys (hash-suffixed -> friendly)");
+  await core.writeMemory(HOME, { name: "legacy-note", description: "old", type: "reference", project: "demo-abcdef0123456789", body: "old body" });
+  // pre-existing friendly project that a second hash project must merge into
+  await core.writeMemory(HOME, { name: "existing-note", description: "exists", type: "user", project: "merge", body: "existing" });
+  await core.writeMemory(HOME, { name: "legacy-merge-note", description: "to merge", type: "project", project: "merge-0123456789abcdef", body: "merge body" });
+  const mig1 = await core.migrateProjectKeys(HOME);
+  check("migration moved files (incl. imported hrouter)", mig1.moved >= 4 && mig1.merged === 0);
+  check("hash dir removed", !existsSync(join(core.memoriesRoot(HOME), "projects", "demo-abcdef0123456789")));
+  check("imported hrouter project migrated", !existsSync(join(core.memoriesRoot(HOME), "projects", "hrouter-beb03a33e80b027c")));
+  const migHr = await core.readMemory(HOME, "hrouter", "用户偏好");
+  check("imported memory rekeyed to friendly project", migHr && migHr.project === "hrouter" && migHr.body === "中文正文");
+  const migNote = await core.readMemory(HOME, "demo", "legacy-note");
+  check("migrated memory rekeyed", migNote && migNote.project === "demo" && migNote.body === "old body");
+  const mergeDir = core.projectDir(HOME, "merge");
+  check("merge target has both", existsSync(join(mergeDir, "memory", "existing-note.md")) && existsSync(join(mergeDir, "memory", "legacy-merge-note.md")));
+  const mergeNote = await core.readMemory(HOME, "merge", "legacy-merge-note");
+  check("merged memory rekeyed", mergeNote && mergeNote.project === "merge");
+  check("merge index regenerated", existsSync(join(mergeDir, "MEMORY.md")));
+  const mig2 = await core.migrateProjectKeys(HOME);
+  check("migration idempotent", mig2.moved === 0 && mig2.merged === 0);
+  const labeled = await core.buildListPayload(HOME, {});
+  const demoItem = labeled.items.find((m) => m.name === "legacy-note");
+  check("list payload has friendly label", demoItem && demoItem.label === "demo");
+
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) {
     console.error("Failures:\n  - " + failures.join("\n  - "));

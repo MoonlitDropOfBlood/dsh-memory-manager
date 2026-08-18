@@ -28,6 +28,8 @@ import {
   buildListPayload,
   deleteMemory,
   importFromZCode,
+  migrateProjectKeys,
+  projectLabel,
   readMemory,
   resolveDshHome,
   resolveZCodeMemoriesDir,
@@ -65,6 +67,22 @@ function splitId(id) {
   };
 }
 
+/** Small owned wire object for one memory (leaf fields only, no Host refs). */
+function toItem(entry) {
+  return {
+    id: entry.project + "/" + entry.name,
+    name: entry.name,
+    description: entry.description,
+    type: entry.type,
+    project: entry.project,
+    label: entry.project === GLOBAL_PROJECT ? "全局" : projectLabel(entry.project),
+    origin: entry.origin,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    body: entry.body,
+  };
+}
+
 export class MemoryService extends TypertRemoteService {
   static inject = ["workspaceRegistry"];
 
@@ -88,6 +106,20 @@ export class MemoryService extends TypertRemoteService {
     markRemoteMethod(this, "update", "update");
     markRemoteMethod(this, "delete", "delete");
     markRemoteMethod(this, "importZCode", "importZCode");
+
+    // Best-effort one-time migration of legacy ZCode hash-suffixed project
+    // directories (`<name>-<16hex>` → `<name>`), so imported memories match
+    // the workspace slugs the UI suggests. Fire-and-forget: it never blocks
+    // startup or the Remote methods (listMemories reads the disk each call).
+    migrateProjectKeys(this.home())
+      .then((r) => {
+        if (r && (r.moved > 0 || r.merged > 0)) {
+          console.log(`[dsh-memory-manager] migrated project keys: ${r.moved} moved, ${r.merged} merged`);
+        }
+      })
+      .catch((error) => {
+        console.error("[dsh-memory-manager] project key migration failed:", error);
+      });
   }
 
   home() {
@@ -144,19 +176,7 @@ export class MemoryService extends TypertRemoteService {
       if (!entry) return { ok: false, error: { code: "not-found", message: "记忆不存在" } };
       return {
         ok: true,
-        value: {
-          item: {
-            id: entry.project + "/" + entry.name,
-            name: entry.name,
-            description: entry.description,
-            type: entry.type,
-            project: entry.project,
-            origin: entry.origin,
-            createdAt: entry.createdAt,
-            updatedAt: entry.updatedAt,
-            body: entry.body,
-          },
-        },
+        value: { item: toItem(entry) },
       };
     } catch (error) {
       return { ok: false, error: { code: "get-failed", message: String(error && error.message ? error.message : error) } };
@@ -179,19 +199,7 @@ export class MemoryService extends TypertRemoteService {
       });
       return {
         ok: true,
-        value: {
-          item: {
-            id: stored.project + "/" + stored.name,
-            name: stored.name,
-            description: stored.description,
-            type: stored.type,
-            project: stored.project,
-            origin: stored.origin,
-            createdAt: stored.createdAt,
-            updatedAt: stored.updatedAt,
-            body: stored.body,
-          },
-        },
+        value: { item: toItem(stored) },
       };
     } catch (error) {
       return { ok: false, error: { code: "create-failed", message: String(error && error.message ? error.message : error) } };
@@ -215,19 +223,7 @@ export class MemoryService extends TypertRemoteService {
       });
       return {
         ok: true,
-        value: {
-          item: {
-            id: stored.project + "/" + stored.name,
-            name: stored.name,
-            description: stored.description,
-            type: stored.type,
-            project: stored.project,
-            origin: stored.origin,
-            createdAt: stored.createdAt,
-            updatedAt: stored.updatedAt,
-            body: stored.body,
-          },
-        },
+        value: { item: toItem(stored) },
       };
     } catch (error) {
       return { ok: false, error: { code: "update-failed", message: String(error && error.message ? error.message : error) } };

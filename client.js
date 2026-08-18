@@ -263,7 +263,7 @@ window.__ModuleLoader__.load({
               React.createElement(
                 "div", { className: "mm-detail-meta" },
                 React.createElement("span", { className: "mm-badge " + (TYPE_CLASS[item.type] || "mm-t-other") }, TYPE_LABEL[item.type] || item.type),
-                React.createElement("span", null, "项目: " + item.project),
+                React.createElement("span", null, "项目: " + (item.label || item.project)),
                 React.createElement("span", null, "更新于 " + fmtTime(item.updatedAt)),
                 item.origin && item.origin !== "manual" ? React.createElement("span", null, "来源: " + item.origin) : null
               ),
@@ -384,7 +384,7 @@ window.__ModuleLoader__.load({
           const groups = [];
           for (const [key, items] of map) {
             items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-            groups.push({ key, label: key === (data && data.globalProject) ? "全局" : key, items });
+            groups.push({ key, label: (items[0] && items[0].label) || (key === (data && data.globalProject) ? "全局" : key), items });
           }
           groups.sort((a, b) => {
             const aGlobal = a.key === (data && data.globalProject) ? 0 : 1;

@@ -25,6 +25,7 @@ const memoryItemSchema = z.object({
   description: z.string().readonly(),
   type: z.string().readonly(),
   project: z.string().readonly(),
+  label: z.string().readonly().optional(),
   origin: z.string().readonly(),
   createdAt: z.number().readonly(),
   updatedAt: z.number().readonly(),
@@ -434,7 +435,7 @@ export const TYPERT = {
           {
             name: "MemoryItem",
             declaration:
-              "export interface MemoryItem {\n    readonly id: string;\n    readonly name: string;\n    readonly description: string;\n    readonly type: string;\n    readonly project: string;\n    readonly origin: string;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly body?: string;\n    readonly size?: number;\n}",
+              "export interface MemoryItem {\n    readonly id: string;\n    readonly name: string;\n    readonly description: string;\n    readonly type: string;\n    readonly project: string;\n    readonly label?: string;\n    readonly origin: string;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly body?: string;\n    readonly size?: number;\n}",
           },
         ],
       },
