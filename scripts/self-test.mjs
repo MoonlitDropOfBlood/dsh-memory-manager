@@ -186,6 +186,23 @@ try {
   const demoItem = labeled.items.find((m) => m.name === "legacy-note");
   check("list payload has friendly label", demoItem && demoItem.label === "demo");
 
+  section("config + auto-load prompt context (sync)");
+  await core.writeConfig(HOME, { autoLoad: true });
+  const cfg = await core.readConfig(HOME);
+  check("config roundtrip", cfg.autoLoad === true);
+  const ctxOff = await core.writeConfig(HOME, { autoLoad: false });
+  check("config persist false", ctxOff.autoLoad === false);
+  const emptyCtx = core.buildMemoryContextSync(HOME, "D:\\proj\\demo");
+  check("autoLoad off => empty context", emptyCtx === "");
+  await core.writeConfig(HOME, { autoLoad: true });
+  const ctx1 = core.buildMemoryContextSync(HOME, "D:\\proj\\demo");
+  check("context includes project memory", ctx1.includes("[reference] legacy-note") && ctx1.includes("old body"));
+  check("context includes global memory", ctx1.includes("global-note"));
+  const ctx2 = core.buildMemoryContextSync(HOME, "D:\\proj\\unknown-proj");
+  check("unknown workspace still gets global", ctx2.includes("global-note") && !ctx2.includes("[reference] legacy-note"));
+  const cfgSync = core.readConfigSync(HOME);
+  check("readConfigSync matches", cfgSync.autoLoad === true);
+
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) {
     console.error("Failures:\n  - " + failures.join("\n  - "));

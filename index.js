@@ -26,14 +26,17 @@ import {
   MEMORY_TYPES,
   GLOBAL_PROJECT,
   buildListPayload,
+  buildMemoryContextSync,
   deleteMemory,
   importFromZCode,
   migrateProjectKeys,
   projectLabel,
+  readConfigSync,
   readMemory,
   resolveDshHome,
   resolveZCodeMemoriesDir,
   sanitizeSegment,
+  writeConfig,
   writeMemory,
 } from "./memory-core.mjs";
 
@@ -106,6 +109,11 @@ export class MemoryService extends TypertRemoteService {
     markRemoteMethod(this, "update", "update");
     markRemoteMethod(this, "delete", "delete");
     markRemoteMethod(this, "importZCode", "importZCode");
+    markRemoteMethod(this, "getConfig", "getConfig");
+    markRemoteMethod(this, "setConfig", "setConfig");
+
+    // Small per-cwd cache for the injected prompt context (sync prompt API).
+    this._contextCache = null;
 
     // Best-effort one-time migration of legacy ZCode hash-suffixed project
     // directories (`<name>-<16hex>` → `<name>`), so imported memories match
@@ -120,6 +128,38 @@ export class MemoryService extends TypertRemoteService {
       .catch((error) => {
         console.error("[dsh-memory-manager] project key migration failed:", error);
       });
+
+    // Auto-load: register a system-prompt section (ZCode-style memory
+    // injection). Every model step of every session gets the current
+    // workspace's project memories plus the global memories as a compact
+    // block, so the agent automatically sees them. The section's text
+    // provider is synchronous, so it reads through the small cache and the
+    // sync context builder.
+    const systemPrompt = this._ctx.get("systemPrompt");
+    if (systemPrompt && typeof systemPrompt.section === "function") {
+      systemPrompt.section({
+        name: "dsh-memory-manager",
+        order: 90,
+        text: (context) => {
+          try {
+            const agent = context && context.agent;
+            const header = agent && agent.session && agent.session.header;
+            const cwd = header && typeof header.cwd === "string" ? header.cwd : "";
+            if (!cwd) return "";
+            const now = Date.now();
+            if (this._contextCache && this._contextCache.key === cwd && now - this._contextCache.ts < 3000) {
+              return this._contextCache.text;
+            }
+            const text = buildMemoryContextSync(this.home(), cwd);
+            this._contextCache = { key: cwd, ts: now, text };
+            return text;
+          } catch (error) {
+            console.error("[dsh-memory-manager] prompt context failed:", error);
+            return "";
+          }
+        },
+      });
+    }
   }
 
   home() {
@@ -197,6 +237,7 @@ export class MemoryService extends TypertRemoteService {
         origin: r.origin,
         body: r.body,
       });
+      this._contextCache = null;
       return {
         ok: true,
         value: { item: toItem(stored) },
@@ -221,6 +262,7 @@ export class MemoryService extends TypertRemoteService {
         body: r.body !== undefined ? r.body : existing.body,
         oldName: existing.name,
       });
+      this._contextCache = null;
       return {
         ok: true,
         value: { item: toItem(stored) },
@@ -235,6 +277,7 @@ export class MemoryService extends TypertRemoteService {
       const { project, name } = splitId(request && request.id);
       const removed = await deleteMemory(this.home(), project, name);
       if (!removed) return { ok: false, error: { code: "not-found", message: "记忆不存在或已删除" } };
+      this._contextCache = null;
       return { ok: true, value: { deleted: true } };
     } catch (error) {
       return { ok: false, error: { code: "delete-failed", message: String(error && error.message ? error.message : error) } };
@@ -247,9 +290,29 @@ export class MemoryService extends TypertRemoteService {
         ? String(request.source)
         : resolveZCodeMemoriesDir();
       const result = await importFromZCode(zcodeDir, this.home());
+      this._contextCache = null;
       return { ok: true, value: result };
     } catch (error) {
       return { ok: false, error: { code: "import-failed", message: String(error && error.message ? error.message : error) } };
+    }
+  }
+
+  async getConfig() {
+    try {
+      return { ok: true, value: { config: readConfigSync(this.home()) } };
+    } catch (error) {
+      return { ok: false, error: { code: "config-failed", message: String(error && error.message ? error.message : error) } };
+    }
+  }
+
+  async setConfig(request) {
+    try {
+      const r = request || {};
+      const config = await writeConfig(this.home(), { autoLoad: r.autoLoad });
+      this._contextCache = null;
+      return { ok: true, value: { config } };
+    } catch (error) {
+      return { ok: false, error: { code: "config-failed", message: String(error && error.message ? error.message : error) } };
     }
   }
 }

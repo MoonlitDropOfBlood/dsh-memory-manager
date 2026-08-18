@@ -38,6 +38,9 @@ window.__ModuleLoader__.load({
 .mm-head-title{font-size:16px;font-weight:500;line-height:24px;margin:0;flex:1}
 .mm-head-actions{display:flex;align-items:center;gap:8px;flex:none}
 .mm-status{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;min-height:18px}
+.mm-toggle{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);cursor:pointer;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}
+.mm-toggle input{accent-color:var(--dsw-alias-brand-primary,#4a7dff);width:15px;height:15px;cursor:pointer;flex:none}
+.mm-toggle-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);margin-left:auto;text-align:right}
 .mm-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
 .mm-card{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:10px 14px;display:flex;flex-direction:column;gap:3px}
 .mm-card-label{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
@@ -123,6 +126,8 @@ window.__ModuleLoader__.load({
         method("update", ["request"]),
         method("delete", ["request"]),
         method("importZCode", ["request"]),
+        method("getConfig", []),
+        method("setConfig", ["request"]),
       ],
     };
 
@@ -343,6 +348,26 @@ window.__ModuleLoader__.load({
         const [importing, setImporting] = React.useState(false); // modal open
         const [importResult, setImportResult] = React.useState(null);
         const [importSource, setImportSource] = React.useState("");
+        const [autoLoad, setAutoLoad] = React.useState(true);
+        const [autoLoadBusy, setAutoLoadBusy] = React.useState(false);
+
+        const loadConfig = React.useCallback(async () => {
+          try {
+            const res = await remote.getConfig();
+            const out = unwrap(res);
+            if (out.ok && out.value && out.value.config) setAutoLoad(out.value.config.autoLoad !== false);
+          } catch (e) { /* keep default */ }
+        }, []);
+
+        const toggleAutoLoad = React.useCallback(async (next) => {
+          setAutoLoadBusy(true);
+          try {
+            const res = await remote.setConfig({ autoLoad: next });
+            const out = unwrap(res);
+            if (out.ok && out.value && out.value.config) setAutoLoad(out.value.config.autoLoad !== false);
+          } catch (e) { /* keep previous */ }
+          finally { setAutoLoadBusy(false); }
+        }, []);
 
         const refresh = React.useCallback(async () => {
           setBusy(true);
@@ -363,6 +388,7 @@ window.__ModuleLoader__.load({
         }, []);
 
         React.useEffect(() => { refresh(); }, [refresh]);
+        React.useEffect(() => { loadConfig(); }, [loadConfig]);
 
         const filtered = React.useMemo(() => {
           if (!data) return [];
@@ -648,6 +674,17 @@ window.__ModuleLoader__.load({
           head,
           React.createElement("div", { className: "mm-status" },
             data ? "共 " + data.items.length + " 条记忆 · " + (data.projects.length || 0) + " 个项目" : ""),
+          React.createElement(
+            "label", { className: "mm-toggle" },
+            React.createElement("input", {
+              type: "checkbox",
+              checked: autoLoad,
+              disabled: autoLoadBusy,
+              onChange: (e) => toggleAutoLoad(e.target.checked),
+            }),
+            React.createElement("span", null, "自动加载记忆到对话上下文"),
+            React.createElement("span", { className: "mm-toggle-hint" }, "每次模型调用自动注入「当前项目 + 全局」的记忆（ZCode 同款机制）")
+          ),
           statsCards,
           toolbar,
           body,

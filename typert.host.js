@@ -137,6 +137,25 @@ const _memoryManager_importZCode_parameter_0$schema = z.object({
   source: z.string().optional().readonly(),
 }).readonly();
 
+const configSchema = z.object({
+  autoLoad: z.boolean().readonly(),
+}).readonly();
+
+const configResultSchema = z.union([
+  z.object({
+    ok: z.literal(true).readonly(),
+    value: z.object({ config: configSchema }).readonly(),
+  }).readonly(),
+  z.object({
+    ok: z.literal(false).readonly(),
+    error: errorSchema,
+  }).readonly(),
+]);
+
+const _memoryManager_setConfig_parameter_0$schema = z.object({
+  autoLoad: z.boolean().optional().readonly(),
+}).readonly();
+
 const listResultSchema = z.union([
   z.object({
     ok: z.literal(true).readonly(),
@@ -303,6 +322,45 @@ export const TYPERT = {
       },
       sourceLocation: { file: "index.js", line: 1, column: 1 },
     },
+    {
+      id: "dsh-memory-manager#memoryManager/getConfig",
+      service: "memoryManager",
+      namespace: "memoryManager",
+      method: "getConfig",
+      invocation: { kind: "direct" },
+      parameters: [],
+      result: {
+        mode: "strict",
+        typeSymbol: "dsh-memory-manager#MemoryManagerGetConfigResult",
+        schema: configResultSchema,
+      },
+      sourceLocation: { file: "index.js", line: 1, column: 1 },
+    },
+    {
+      id: "dsh-memory-manager#memoryManager/setConfig",
+      service: "memoryManager",
+      namespace: "memoryManager",
+      method: "setConfig",
+      invocation: { kind: "direct" },
+      parameters: [
+        {
+          name: "request",
+          wire: "request",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: "dsh-memory-manager#MemoryManagerSetConfigRequest",
+            schema: _memoryManager_setConfig_parameter_0$schema,
+          },
+        },
+      ],
+      result: {
+        mode: "strict",
+        typeSymbol: "dsh-memory-manager#MemoryManagerSetConfigResult",
+        schema: configResultSchema,
+      },
+      sourceLocation: { file: "index.js", line: 1, column: 1 },
+    },
   ],
   model: {
     services: [
@@ -370,6 +428,24 @@ export const TYPERT = {
             jsDoc:
               "/**\n * Import memories from an existing ZCode memory directory (`~/.zcode/cli/memories` by default),\n * deduplicated by project + name.\n * @param request - optional explicit source directory.\n * @returns import counts per project.\n */",
           },
+          {
+            kind: "method",
+            name: "getConfig",
+            signature:
+              "@Remote('getConfig') async getConfig(): Promise<MemoryManagerGetConfigResult>",
+            summary: "Read the plugin config (auto-load switch).",
+            jsDoc:
+              "/**\n * Read the plugin config (auto-load switch).\n * @returns the resolved config.\n */",
+          },
+          {
+            kind: "method",
+            name: "setConfig",
+            signature:
+              "@Remote('setConfig') async setConfig(request?: MemoryManagerSetConfigRequest): Promise<MemoryManagerSetConfigResult>",
+            summary: "Update the plugin config (auto-load switch).",
+            jsDoc:
+              "/**\n * Update the plugin config (auto-load switch).\n * @param request - the fields to change.\n * @returns the resolved config.\n */",
+          },
         ],
         types: [
           {
@@ -431,6 +507,21 @@ export const TYPERT = {
             name: "MemoryManagerImportZCodeResult",
             declaration:
               "export type MemoryManagerImportZCodeResult = { ok: true; value: { imported: number; skipped: number; total: number; projects: readonly { source: string; project: string; imported: number; skipped: number }[] } } | { ok: false; error: { code: string; message?: string } };",
+          },
+          {
+            name: "MemoryManagerGetConfigResult",
+            declaration:
+              "export type MemoryManagerGetConfigResult = { ok: true; value: { config: { autoLoad: boolean } } } | { ok: false; error: { code: string; message?: string } };",
+          },
+          {
+            name: "MemoryManagerSetConfigRequest",
+            declaration:
+              "export interface MemoryManagerSetConfigRequest {\n    readonly autoLoad?: boolean;\n}",
+          },
+          {
+            name: "MemoryManagerSetConfigResult",
+            declaration:
+              "export type MemoryManagerSetConfigResult = { ok: true; value: { config: { autoLoad: boolean } } } | { ok: false; error: { code: string; message?: string } };",
           },
           {
             name: "MemoryItem",

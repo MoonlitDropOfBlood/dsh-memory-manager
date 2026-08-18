@@ -27,7 +27,7 @@
  */
 
 import { readFile, writeFile, mkdir, readdir, rm, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -35,6 +35,7 @@ export const MEMORY_TYPES = ["user", "feedback", "reference", "project", "other"
 export const GLOBAL_PROJECT = "global";
 export const INDEX_FILE = "MEMORY.md";
 export const SUMMARY_FILE = "memory_summary.md";
+export const CONFIG_FILE = "config.json";
 
 /** Files that are generated indexes, never memories. */
 const INDEX_FILES = new Set([INDEX_FILE, SUMMARY_FILE]);
@@ -516,4 +517,146 @@ export async function importFromZCode(zcodeMemoriesDir, home) {
     });
   }
   return result;
+}
+
+// ---- auto-load context (prompt injection) --------------------------------
+
+/** Read the plugin config (`autoLoad` etc.). Defaults to autoLoad on. */
+export async function readConfig(home) {
+  const p = join(memoriesRoot(home), CONFIG_FILE);
+  if (!existsSync(p)) return { autoLoad: true };
+  try {
+    const c = JSON.parse(await readFile(p, "utf8"));
+    return { autoLoad: c.autoLoad !== false };
+  } catch {
+    return { autoLoad: true };
+  }
+}
+
+/** Synchronous variant used by the prompt provider. */
+export function readConfigSync(home) {
+  const p = join(memoriesRoot(home), CONFIG_FILE);
+  if (!existsSync(p)) return { autoLoad: true };
+  try {
+    const c = JSON.parse(readFileSync(p, "utf8"));
+    return { autoLoad: c.autoLoad !== false };
+  } catch {
+    return { autoLoad: true };
+  }
+}
+
+/** Merge a patch into the plugin config and persist it. */
+export async function writeConfig(home, patch) {
+  const cur = await readConfig(home);
+  const next = { ...cur, ...(patch || {}) };
+  await mkdir(memoriesRoot(home), { recursive: true });
+  await writeFile(join(memoriesRoot(home), CONFIG_FILE), JSON.stringify(next, null, 2), "utf8");
+  return next;
+}
+
+/** Synchronous per-project memory listing (for prompt injection). */
+function listMemoriesSync(home) {
+  const root = memoriesRoot(home);
+  const projectsRoot = join(root, "projects");
+  const out = [];
+  if (!existsSync(projectsRoot)) return out;
+  let dirs = [];
+  try {
+    dirs = readdirSync(projectsRoot, { withFileTypes: true }).filter((d) => d.isDirectory());
+  } catch {
+    return out;
+  }
+  for (const d of dirs) {
+    const memDir = join(projectsRoot, d.name, "memory");
+    if (!existsSync(memDir)) continue;
+    let files = [];
+    try {
+      files = readdirSync(memDir).filter((f) => f.endsWith(".md"));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      try {
+        const p = join(memDir, f);
+        const text = readFileSync(p, "utf8");
+        const { fields, body } = parseFrontmatter(text);
+        const entry = normalizeEntry(fields, body, statSync(p).mtimeMs);
+        out.push({
+          id: entry.project + "/" + entry.name,
+          name: entry.name,
+          description: entry.description,
+          type: entry.type,
+          project: entry.project || d.name,
+          origin: entry.origin,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+          body,
+        });
+      } catch {
+        /* skip unreadable file */
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Build the compact markdown block injected into the model prompt for one
+ * workspace: the workspace project's memories plus global memories, newest
+ * first, bodies flattened and truncated. Empty when autoLoad is off or there
+ * is nothing to inject. Synchronous — the prompt section API is sync.
+ *
+ * @returns {string} the memory context block, or "" when nothing applies.
+ */
+export function buildMemoryContextSync(
+  home,
+  workspacePath,
+  { maxItems = 16, maxBodyChars = 400, maxTotalChars = 6000 } = {},
+) {
+  if (readConfigSync(home).autoLoad === false) return "";
+  const project = projectKeyFromPath(workspacePath);
+  const all = listMemoriesSync(home);
+  if (all.length === 0) return "";
+  const pick = (arr) =>
+    [...arr]
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .slice(0, maxItems);
+  const projectItems = pick(all.filter((m) => m.project === project));
+  const globalItems = pick(all.filter((m) => m.project === GLOBAL_PROJECT));
+  if (projectItems.length === 0 && globalItems.length === 0) return "";
+
+  const sections = [];
+  let budget = maxTotalChars;
+  const pushItems = (heading, items) => {
+    if (items.length === 0) return;
+    const block = [heading];
+    let used = heading.length + 2;
+    for (const m of items) {
+      const body = String(m.body || "")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\s*\n\s*/g, " ")
+        .trim();
+      const clipped = body.length > maxBodyChars ? body.slice(0, maxBodyChars) + "…" : body;
+      const desc = m.description ? " — " + m.description : "";
+      const line = `- [${m.type}] ${m.name}${desc}${clipped ? "\n  " + clipped : ""}`;
+      used += line.length + 1;
+      if (used > budget) break;
+      block.push(line);
+    }
+    if (block.length > 1) {
+      sections.push(block.join("\n"));
+      budget -= block.join("\n").length + 1;
+    }
+  };
+
+  const label = project === GLOBAL_PROJECT ? "全局" : projectLabel(project);
+  pushItems(`### 项目记忆（${label} · ${projectItems.length} 条）`, projectItems);
+  pushItems(`### 全局记忆（${globalItems.length} 条）`, globalItems);
+  if (sections.length === 0) return "";
+
+  return (
+    "## 记忆（dsh-memory-manager）\n\n" +
+    "以下是持久记忆，仅在与当前任务相关时参考。\n\n" +
+    sections.join("\n\n")
+  );
 }
