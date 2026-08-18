@@ -1,0 +1,89 @@
+name: Release 1.0
+
+# 打 v* 标签（如 v1.0.0）时构建插件包并发布为 GitHub Release。
+# 发布需要仓库 secret：GH_TOKEN（GitHub Personal Access Token，需 contents:write 权限）。
+# 也支持手动触发（workflow_dispatch）构建产物但不发布正式 Release（仅 artifact）。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Package plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Syntax check
+        run: |
+          node --check index.js
+          node --check client.js
+          node --check typert.host.js
+          node --check memory-core.mjs
+
+      - name: Core self-test
+        run: node scripts/self-test.mjs
+
+      - name: Package tarball
+        run: npm pack
+        env:
+          npm_config_package_lock: "false"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-tarball
+          path: ./*.tgz
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## 1.0.0 — ZCode 记忆移植 + 设置记忆管理
+
+            ### ✨ 功能
+            - **ZCode 记忆移植**：ZCode 风格的项目记忆存储（`<DSH_HOME>/memories/projects/<p>/memory/*.md`，含 `MEMORY.md` 索引与 `memory_summary.md` 摘要），类型体系 user / feedback / reference / project / other。
+            - **设置「记忆管理」页**：搜索、项目/类型筛选、按项目分组、新建 / 编辑 / 查看 / 删除（二次确认）。
+            - **从 ZCode 一键导入**：扫描 `~/.zcode/cli/memories`（memory/ + topics/），按项目 + 名称去重，不覆盖已有记忆。
+
+            ### 📦 安装
+            ```bash
+            git clone git@github.com:MoonlitDropOfBlood/dsh-memory-manager.git
+            cd dsh-memory-manager
+            node scripts/install.mjs
+            # 重启 DSH 后，设置 → 记忆管理
+            ```
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
