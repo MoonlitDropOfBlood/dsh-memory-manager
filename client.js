@@ -26,17 +26,17 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const React = require("react");
+    // Official DSH design-system atoms (Button etc.) — same pattern as the
+    // desktop-plugin bundle. The Button variants are backed by the
+    // `--dsw-alias-button-*` token family, so light/dark themes are automatic.
+    const ui = require("@deepseek-ai/dsh-client-ui-primitives");
 
     // ---- CSS (package-owned, mirrors DSH design tokens) --------------------
     const CSS = `
 .mm-page{max-width:760px;width:100%;box-sizing:border-box;color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;gap:14px}
 .mm-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .mm-head-title{font-size:16px;font-weight:500;line-height:24px;margin:0;flex:1}
-.mm-btn{box-sizing:border-box;height:28px;font:inherit;cursor:pointer;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:transparent;color:var(--dsw-alias-label-secondary);padding:0 12px;font-size:12px;line-height:26px;white-space:nowrap}
-.mm-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}
-.mm-btn-primary{background:var(--dsw-alias-brand-primary,#4a7dff);border-color:transparent;color:#fff}
-.mm-btn-primary:hover{color:#fff;opacity:.9}
-.mm-btn[disabled]{opacity:.5;cursor:default}
+.mm-head-actions{display:flex;align-items:center;gap:8px;flex:none}
 .mm-status{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;min-height:18px}
 .mm-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
 .mm-card{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:10px 14px;display:flex;flex-direction:column;gap:3px}
@@ -237,9 +237,9 @@ window.__ModuleLoader__.load({
             ),
             React.createElement(
               "div", { className: "mm-modal-foot" },
-              React.createElement("button", { className: "mm-btn", onClick: props.onClose }, "取消"),
-              React.createElement("button", {
-                className: "mm-btn mm-btn-primary", disabled: props.busy || !name.trim(),
+              React.createElement(ui.Button, { variant: "ghost", size: "sm", onClick: props.onClose }, "取消"),
+              React.createElement(ui.Button, {
+                variant: "primary", size: "sm", disabled: props.busy || !name.trim(),
                 onClick: () => props.onSave({ name, description, type, project, body }),
               }, props.busy ? "保存中…" : "保存")
             )
@@ -272,8 +272,8 @@ window.__ModuleLoader__.load({
             ),
             React.createElement(
               "div", { className: "mm-modal-foot" },
-              React.createElement("button", { className: "mm-btn", onClick: props.onEdit }, "编辑"),
-              React.createElement("button", { className: "mm-btn mm-btn-primary", onClick: props.onClose }, "关闭")
+              React.createElement(ui.Button, { variant: "ghost", size: "sm", onClick: props.onEdit }, "编辑"),
+              React.createElement(ui.Button, { variant: "primary", size: "sm", onClick: props.onClose }, "关闭")
             )
           )
         );
@@ -318,10 +318,10 @@ window.__ModuleLoader__.load({
             ),
             React.createElement(
               "div", { className: "mm-modal-foot" },
-              React.createElement("button", { className: "mm-btn", onClick: props.onClose }, "关闭"),
+              React.createElement(ui.Button, { variant: "ghost", size: "sm", onClick: props.onClose }, "关闭"),
               !props.result
-                ? React.createElement("button", {
-                    className: "mm-btn mm-btn-primary", disabled: props.busy,
+                ? React.createElement(ui.Button, {
+                    variant: "primary", size: "sm", disabled: props.busy,
                     onClick: props.onRun,
                   }, props.busy ? "导入中…" : "开始导入")
                 : null
@@ -596,17 +596,16 @@ window.__ModuleLoader__.load({
         const head = React.createElement(
           "div", { className: "mm-head" },
           React.createElement("div", { className: "mm-head-title" }, "记忆管理"),
-          React.createElement("button", { className: "mm-btn", onClick: () => refresh(), disabled: busy }, "刷新"),
-          React.createElement("button", {
-            className: "mm-btn mm-btn-primary",
-            onClick: () => setEditing({}),
-            disabled: busy,
-          }, "新建记忆"),
-          React.createElement("button", {
-            className: "mm-btn",
-            onClick: () => { setImportResult(null); setImportSource(""); setImporting(true); },
-            disabled: busy,
-          }, "从 ZCode 导入")
+          React.createElement(
+            "div", { className: "mm-head-actions" },
+            React.createElement(ui.Button, { variant: "ghost", size: "sm", onClick: () => refresh(), disabled: busy }, "刷新"),
+            React.createElement(ui.Button, { variant: "primary", size: "sm", onClick: () => setEditing({}), disabled: busy }, "新建记忆"),
+            React.createElement(ui.Button, {
+              variant: "outline", size: "sm",
+              onClick: () => { setImportResult(null); setImportSource(""); setImporting(true); },
+              disabled: busy,
+            }, "从 ZCode 导入")
+          )
         );
 
         const modals = [];
