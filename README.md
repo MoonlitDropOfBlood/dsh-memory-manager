@@ -24,10 +24,11 @@
 |---|---|
 | 🧠 ZCode 记忆移植 | 沿用 ZCode 的记忆文件格式（YAML frontmatter + 正文）、类型体系（user / feedback / reference / project / other）与按项目分目录的存储布局 |
 | ⚙️ 设置中的记忆管理 | 设置面板新增 **记忆管理** 页：搜索、项目/类型筛选、按项目分组、新建 / 编辑 / 删除（二次确认）/ 查看正文 |
+| 🔄 自动加载到对话 | 每次模型调用自动把「当前项目 + 全局」的记忆作为系统提示注入给智能体（ZCode 同款机制），可在记忆管理页一键开关 |
 | 📥 从 ZCode 导入 | 一键扫描 `~/.zcode/cli/memories`（`memory/` + `topics/`），按项目 + 名称去重，不覆盖已有记忆 |
 | 🌐 全局 + 项目记忆 | `global` 项目存放跨项目记忆；项目 key 取自工作区路径名，自动清洗为安全片段 |
 | 📄 自动索引 | 每次变更自动重写 `MEMORY.md` 索引与 `memory_summary.md` 摘要 |
-| 🌗 主题适配 | 全部使用 DSH 设计 token，明暗主题自动跟随 |
+| 🌗 主题适配 | 全部使用 DSH 设计 token（按钮为官方 DSH Button 组件），明暗主题自动跟随 |
 
 ## 安装
 
@@ -65,9 +66,10 @@ node scripts/install.mjs
 
 1. 打开 **设置**，侧栏出现 **记忆管理** 页。
 2. 列表按项目分组、最新优先；顶部可**搜索**（名称/描述）、按**项目**和**类型**筛选；卡片展示类型徽章与更新时间。
-3. **新建记忆**：填写名称（建议短横线 slug，可含中文）、类型、项目（`global` = 全局，或某个项目名，可参考工作区建议）、描述与 Markdown 正文。
-4. **编辑 / 查看 / 删除**：每行右侧操作；删除需二次确认（永久，不可恢复）。
-5. **从 ZCode 导入**：一键导入 `~/.zcode/cli/memories` 下各项目的记忆，同名自动跳过，结束后展示每个项目的导入/跳过统计。
+3. **自动加载记忆到对话上下文**：默认开启。每次模型调用，DSH 会把当前会话工作区项目的记忆 + 全局记忆，作为系统提示的「记忆」段落自动注入给智能体（与 ZCode 一致）。可在记忆管理页顶部关掉。
+4. **新建记忆**：填写名称（建议短横线 slug，可含中文）、类型、项目（`global` = 全局，或某个项目名，可参考工作区建议）、描述与 Markdown 正文。
+5. **编辑 / 查看 / 删除**：每行右侧操作；删除需二次确认（永久，不可恢复）。
+6. **从 ZCode 导入**：一键导入 `~/.zcode/cli/memories` 下各项目的记忆，同名自动跳过，结束后展示每个项目的导入/跳过统计。
 
 ## 工作原理
 
@@ -75,12 +77,15 @@ node scripts/install.mjs
 DSH Web UI
   └─ client.js (window.__ModuleLoader__.load bundle)
        └─ settings.section 注册「记忆管理」页
-            └─ ctx.remote.memoryManager.{list|get|create|update|delete|importZCode}
+            └─ ctx.remote.memoryManager.{list|get|create|update|delete|importZCode|getConfig|setConfig}
                  └─ index.js (MemoryService, TypertRemoteService)
+                      ├─ systemPrompt.section（order 90）→ 每次模型调用注入「记忆」段落
+                      │    └─ context.agent.session.header.cwd → 项目 key → 项目 + 全局记忆（同步渲染，进程内缓存）
                       └─ memory-core.mjs（node:fs 直接读写）
                            ├─ <DSH_HOME>/memories/projects/<p>/memory/<name>.md
                            ├─ <DSH_HOME>/memories/projects/<p>/MEMORY.md
-                           └─ <DSH_HOME>/memories/projects/<p>/memory_summary.md
+                           ├─ <DSH_HOME>/memories/projects/<p>/memory_summary.md
+                           └─ <DSH_HOME>/memories/config.json（autoLoad 开关）
 ```
 
 记忆存储走 `node:fs` 直接落在 `<DSH_HOME>/memories/`（与 DSH 核心写 `~/.dsh` 的方式一致），无需 shell 沙箱。
