@@ -521,27 +521,27 @@ export async function importFromZCode(zcodeMemoriesDir, home) {
 
 // ---- auto-load context (prompt injection) --------------------------------
 
-/** Read the plugin config (`autoLoad` etc.). Defaults to autoLoad on. */
+/** Read the plugin config (`autoLoad` / `injectBody`). Defaults: autoLoad on, injectBody off (index-only injection). */
 export async function readConfig(home) {
   const p = join(memoriesRoot(home), CONFIG_FILE);
-  if (!existsSync(p)) return { autoLoad: true };
+  if (!existsSync(p)) return { autoLoad: true, injectBody: false };
   try {
     const c = JSON.parse(await readFile(p, "utf8"));
-    return { autoLoad: c.autoLoad !== false };
+    return { autoLoad: c.autoLoad !== false, injectBody: c.injectBody === true };
   } catch {
-    return { autoLoad: true };
+    return { autoLoad: true, injectBody: false };
   }
 }
 
 /** Synchronous variant used by the prompt provider. */
 export function readConfigSync(home) {
   const p = join(memoriesRoot(home), CONFIG_FILE);
-  if (!existsSync(p)) return { autoLoad: true };
+  if (!existsSync(p)) return { autoLoad: true, injectBody: false };
   try {
     const c = JSON.parse(readFileSync(p, "utf8"));
-    return { autoLoad: c.autoLoad !== false };
+    return { autoLoad: c.autoLoad !== false, injectBody: c.injectBody === true };
   } catch {
-    return { autoLoad: true };
+    return { autoLoad: true, injectBody: false };
   }
 }
 
@@ -603,17 +603,27 @@ function listMemoriesSync(home) {
 /**
  * Build the compact markdown block injected into the model prompt for one
  * workspace: the workspace project's memories plus global memories, newest
- * first, bodies flattened and truncated. Empty when autoLoad is off or there
- * is nothing to inject. Synchronous — the prompt section API is sync.
+ * first. Two injection modes:
+ *
+ *   - index mode (default, `injectBody: false`): one line per memory —
+ *     `- [type] name — description (updated: date)`. The agent reads full
+ *     bodies on demand through the `memory_get` tool.
+ *   - body mode (`injectBody: true`, legacy ZCode-style): additionally
+ *     appends the flattened body truncated to `maxBodyChars`.
+ *
+ * Empty when autoLoad is off or there is nothing to inject. Synchronous —
+ * the prompt section API is sync.
  *
  * @returns {string} the memory context block, or "" when nothing applies.
  */
 export function buildMemoryContextSync(
   home,
   workspacePath,
-  { maxItems = 16, maxBodyChars = 400, maxTotalChars = 6000 } = {},
+  { maxItems = 24, maxBodyChars = 400, maxDescChars = 160, maxTotalChars = 6000 } = {},
 ) {
-  if (readConfigSync(home).autoLoad === false) return "";
+  const config = readConfigSync(home);
+  if (config.autoLoad === false) return "";
+  const injectBody = config.injectBody === true;
   const project = projectKeyFromPath(workspacePath);
   const all = listMemoriesSync(home);
   if (all.length === 0) return "";
@@ -632,13 +642,20 @@ export function buildMemoryContextSync(
     const block = [heading];
     let used = heading.length + 2;
     for (const m of items) {
-      const body = String(m.body || "")
-        .replace(/[ \t]+/g, " ")
-        .replace(/\s*\n\s*/g, " ")
-        .trim();
-      const clipped = body.length > maxBodyChars ? body.slice(0, maxBodyChars) + "…" : body;
-      const desc = m.description ? " — " + m.description : "";
-      const line = `- [${m.type}] ${m.name}${desc}${clipped ? "\n  " + clipped : ""}`;
+      const rawDesc = String(m.description || "").replace(/\s+/g, " ").trim();
+      const descText = rawDesc.length > maxDescChars ? rawDesc.slice(0, maxDescChars) + "…" : rawDesc;
+      const desc = descText ? " — " + descText : "";
+      let line;
+      if (injectBody) {
+        const body = String(m.body || "")
+          .replace(/[ \t]+/g, " ")
+          .replace(/\s*\n\s*/g, " ")
+          .trim();
+        const clipped = body.length > maxBodyChars ? body.slice(0, maxBodyChars) + "…" : body;
+        line = `- [${m.type}] ${m.name}${desc}${clipped ? "\n  " + clipped : ""}`;
+      } else {
+        line = `- [${m.type}] ${m.name}${desc}（更新于 ${fmtDate(m.updatedAt)}）`;
+      }
       used += line.length + 1;
       if (used > budget) break;
       block.push(line);
@@ -654,9 +671,14 @@ export function buildMemoryContextSync(
   pushItems(`### 全局记忆（${globalItems.length} 条）`, globalItems);
   if (sections.length === 0) return "";
 
+  const pointer = injectBody
+    ? "以下是持久记忆，仅在与当前任务相关时参考。发现值得长期保留的用户偏好、纠正/反馈或项目约定时，用 memory_save 工具保存（同名即更新）。"
+    : "以下是持久记忆的索引，只含名称与描述。某条与当前任务相关时，用 memory_get 工具按名称读取完整内容；发现值得长期保留的用户偏好、纠正/反馈或项目约定时，用 memory_save 工具保存（同名即更新）。";
+
   return (
     "## 记忆（dsh-memory-manager）\n\n" +
-    "以下是持久记忆，仅在与当前任务相关时参考。\n\n" +
+    pointer +
+    "\n\n" +
     sections.join("\n\n")
   );
 }

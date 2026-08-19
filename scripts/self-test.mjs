@@ -190,18 +190,32 @@ try {
   await core.writeConfig(HOME, { autoLoad: true });
   const cfg = await core.readConfig(HOME);
   check("config roundtrip", cfg.autoLoad === true);
+  check("config default injectBody false", cfg.injectBody === false);
   const ctxOff = await core.writeConfig(HOME, { autoLoad: false });
   check("config persist false", ctxOff.autoLoad === false);
   const emptyCtx = core.buildMemoryContextSync(HOME, "D:\\proj\\demo");
   check("autoLoad off => empty context", emptyCtx === "");
   await core.writeConfig(HOME, { autoLoad: true });
   const ctx1 = core.buildMemoryContextSync(HOME, "D:\\proj\\demo");
-  check("context includes project memory", ctx1.includes("[reference] legacy-note") && ctx1.includes("old body"));
+  check("index mode includes project memory line", ctx1.includes("[reference] legacy-note"));
+  check("index mode omits body", !ctx1.includes("old body"));
+  check("index mode points to memory tools", ctx1.includes("memory_get") && ctx1.includes("memory_save"));
   check("context includes global memory", ctx1.includes("global-note"));
   const ctx2 = core.buildMemoryContextSync(HOME, "D:\\proj\\unknown-proj");
   check("unknown workspace still gets global", ctx2.includes("global-note") && !ctx2.includes("[reference] legacy-note"));
   const cfgSync = core.readConfigSync(HOME);
-  check("readConfigSync matches", cfgSync.autoLoad === true);
+  check("readConfigSync matches", cfgSync.autoLoad === true && cfgSync.injectBody === false);
+
+  section("injectBody mode (legacy full-body injection)");
+  const bodyCfg = await core.writeConfig(HOME, { injectBody: true });
+  check("injectBody persisted, autoLoad preserved", bodyCfg.injectBody === true && bodyCfg.autoLoad === true);
+  const ctxBody = core.buildMemoryContextSync(HOME, "D:\\proj\\demo");
+  check("body mode includes body clip", ctxBody.includes("old body"));
+  check("body mode keeps index line", ctxBody.includes("[reference] legacy-note"));
+  const ctxBodyGlobal = core.buildMemoryContextSync(HOME, "D:\\proj\\unknown-proj");
+  check("body mode still scopes projects", ctxBodyGlobal.includes("global-note") && !ctxBodyGlobal.includes("[reference] legacy-note"));
+  await core.writeConfig(HOME, { injectBody: false });
+  check("injectBody toggled back off", core.readConfigSync(HOME).injectBody === false);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) {

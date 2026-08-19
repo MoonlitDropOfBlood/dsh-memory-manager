@@ -98,11 +98,32 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 2. 在 `<DSH_HOME>/profiles/web/cordis.patch.yml` 用 `- insert:` 新增 `memory-manager` 行（不要用普通 `- id:` 覆盖）。
 3. 重启 DSH。**必须重启**，Host 加载、typert 注册、client bundle 注入都在启动时发生。
 
+### 7. Agent 记忆工具 + 索引注入（v1.1）
+
+**注入是索引优先的**：`buildMemoryContextSync` 默认（`config.injectBody === false`）每条记忆只注入一行 `- [type] name — description（更新于 …）`，不带正文；`injectBody: true` 恢复旧模式（附加压平后 400 字正文截断）。配置落在 `<DSH_HOME>/memories/config.json`，UI 两个开关分别对应 `autoLoad` / `injectBody`。
+
+**Agent 回写回路**：`[Service.init]()` 里用 `ctx.get("tools")` 拿 ToolRuntime，**动态 `import("@deepseek-ai/dsh-tools")`** 拿 `defineTool` 后注册三个模型工具：
+
+| 工具 | 作用 | 关键参数 |
+|---|---|---|
+| `memory_save` | 保存/更新记忆（同名即更新，新建 `origin: "agent"`） | name / description / type(enum) / body / project? |
+| `memory_get` | 按名称读全文（配索引注入使用） | name / project? |
+| `memory_list` | 跨项目搜索（名称/描述过滤，上限 50 条，不含正文） | query? / project? |
+
+要点：
+
+- **动态 import 是有意的**：`@deepseek-ai/dsh-tools` 解析失败只损失工具，不拖垮整个记忆服务。本机它从 `<DSH_HOME>/profiles/node_modules`（profile 共享依赖目录）解析。
+- `ctx.tools.register()` 返回的 disposer 由 fiber 托管，无需手动清理（同 dsh-tool-web）。
+- 工具的项目定位：`exec.agent.session.header.cwd` → `projectKeyFromPath`；模型也可显式传 `project`（`"global"` = 全局）。**cwd 拿不到就抛错**，宁可失败也不写错项目。
+- 工具指引通过第二个 `systemPrompt.section`（`name: "tool:memory"`，order 100，遵循工具指引 100-199 区间约定）常驻提示词；索引段落本身（order 90）的引导语也指向 `memory_get` / `memory_save`。
+- 工具参数/输出用 dsh-tools 的 schema DSL：string 支持 `enum`，object 必须显式 `additionalProperties`，`required: true` 逐字段标注。
+- `setConfig` Remote 只合并且显式传入的布尔字段——`undefined` 会被 JSON 丢弃导致配置悄悄回默认值。
+
 ## 开发 / 验证
 
 ```bash
 npm run check            # 语法检查全部 JS
-npm test                 # 独立核心自测（43 项断言：路径清洗/frontmatter/CRUD/索引/导入/去重/目录清理）
+npm test                 # 独立核心自测（68 项断言：路径清洗/frontmatter/CRUD/索引/导入/去重/目录清理/双模式注入）
 node scripts/install.mjs # 安装到本机 DSH profile
 ```
 
@@ -112,6 +133,7 @@ node scripts/install.mjs # 安装到本机 DSH profile
 3. 编辑（改名/改类型/改正文）→ 旧文件消失、新文件正确。
 4. 删除（二次确认）→ 文件与（空项目）目录被清理。
 5. 从 ZCode 导入 → 统计与磁盘文件一致；重复导入全部跳过。
+6. 开新会话 → agent 工具列表有 `memory_save` / `memory_get` / `memory_list`；让 agent「记住」一个偏好 → 磁盘出现新记忆且 `origin: agent`，下一轮会话索引注入里能看到它。
 
 ## 发布
 

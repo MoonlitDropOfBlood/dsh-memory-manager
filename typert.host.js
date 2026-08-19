@@ -139,6 +139,7 @@ const _memoryManager_importZCode_parameter_0$schema = z.object({
 
 const configSchema = z.object({
   autoLoad: z.boolean().readonly(),
+  injectBody: z.boolean().readonly(),
 }).readonly();
 
 const configResultSchema = z.union([
@@ -154,6 +155,7 @@ const configResultSchema = z.union([
 
 const _memoryManager_setConfig_parameter_0$schema = z.object({
   autoLoad: z.boolean().optional().readonly(),
+  injectBody: z.boolean().optional().readonly(),
 }).readonly();
 
 const listResultSchema = z.union([
@@ -511,17 +513,17 @@ export const TYPERT = {
           {
             name: "MemoryManagerGetConfigResult",
             declaration:
-              "export type MemoryManagerGetConfigResult = { ok: true; value: { config: { autoLoad: boolean } } } | { ok: false; error: { code: string; message?: string } };",
+              "export type MemoryManagerGetConfigResult = { ok: true; value: { config: { autoLoad: boolean; injectBody: boolean } } } | { ok: false; error: { code: string; message?: string } };",
           },
           {
             name: "MemoryManagerSetConfigRequest",
             declaration:
-              "export interface MemoryManagerSetConfigRequest {\n    readonly autoLoad?: boolean;\n}",
+              "export interface MemoryManagerSetConfigRequest {\n    readonly autoLoad?: boolean;\n    readonly injectBody?: boolean;\n}",
           },
           {
             name: "MemoryManagerSetConfigResult",
             declaration:
-              "export type MemoryManagerSetConfigResult = { ok: true; value: { config: { autoLoad: boolean } } } | { ok: false; error: { code: string; message?: string } };",
+              "export type MemoryManagerSetConfigResult = { ok: true; value: { config: { autoLoad: boolean; injectBody: boolean } } } | { ok: false; error: { code: string; message?: string } };",
           },
           {
             name: "MemoryItem",

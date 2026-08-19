@@ -350,12 +350,17 @@ window.__ModuleLoader__.load({
         const [importSource, setImportSource] = React.useState("");
         const [autoLoad, setAutoLoad] = React.useState(true);
         const [autoLoadBusy, setAutoLoadBusy] = React.useState(false);
+        const [injectBody, setInjectBody] = React.useState(false);
+        const [injectBodyBusy, setInjectBodyBusy] = React.useState(false);
 
         const loadConfig = React.useCallback(async () => {
           try {
             const res = await remote.getConfig();
             const out = unwrap(res);
-            if (out.ok && out.value && out.value.config) setAutoLoad(out.value.config.autoLoad !== false);
+            if (out.ok && out.value && out.value.config) {
+              setAutoLoad(out.value.config.autoLoad !== false);
+              setInjectBody(out.value.config.injectBody === true);
+            }
           } catch (e) { /* keep default */ }
         }, []);
 
@@ -367,6 +372,16 @@ window.__ModuleLoader__.load({
             if (out.ok && out.value && out.value.config) setAutoLoad(out.value.config.autoLoad !== false);
           } catch (e) { /* keep previous */ }
           finally { setAutoLoadBusy(false); }
+        }, []);
+
+        const toggleInjectBody = React.useCallback(async (next) => {
+          setInjectBodyBusy(true);
+          try {
+            const res = await remote.setConfig({ injectBody: next });
+            const out = unwrap(res);
+            if (out.ok && out.value && out.value.config) setInjectBody(out.value.config.injectBody === true);
+          } catch (e) { /* keep previous */ }
+          finally { setInjectBodyBusy(false); }
         }, []);
 
         const refresh = React.useCallback(async () => {
@@ -683,7 +698,18 @@ window.__ModuleLoader__.load({
               onChange: (e) => toggleAutoLoad(e.target.checked),
             }),
             React.createElement("span", null, "自动加载记忆到对话上下文"),
-            React.createElement("span", { className: "mm-toggle-hint" }, "每次模型调用自动注入「当前项目 + 全局」的记忆（ZCode 同款机制）")
+            React.createElement("span", { className: "mm-toggle-hint" }, "每次模型调用自动注入「当前项目 + 全局」的记忆索引（名称 + 描述）")
+          ),
+          React.createElement(
+            "label", { className: "mm-toggle" },
+            React.createElement("input", {
+              type: "checkbox",
+              checked: injectBody,
+              disabled: injectBodyBusy,
+              onChange: (e) => toggleInjectBody(e.target.checked),
+            }),
+            React.createElement("span", null, "注入记忆正文（不推荐）"),
+            React.createElement("span", { className: "mm-toggle-hint" }, "开启后每条记忆附带最多 400 字正文；关闭时仅注入索引，agent 可用 memory_get 工具按需读取全文，更省上下文")
           ),
           statsCards,
           toolbar,
