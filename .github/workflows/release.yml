@@ -22,10 +22,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          # no committed lockfile — `cache: npm` fails the step outright
+          # ("Dependencies lock file is not found")
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm install
 
       - name: Syntax check
         run: |
@@ -70,12 +71,7 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## 1.0.0 — ZCode 记忆移植 + 设置记忆管理
-
-            ### ✨ 功能
-            - **ZCode 记忆移植**：ZCode 风格的项目记忆存储（`<DSH_HOME>/memories/projects/<p>/memory/*.md`，含 `MEMORY.md` 索引与 `memory_summary.md` 摘要），类型体系 user / feedback / reference / project / other。
-            - **设置「记忆管理」页**：搜索、项目/类型筛选、按项目分组、新建 / 编辑 / 查看 / 删除（二次确认）。
-            - **从 ZCode 一键导入**：扫描 `~/.zcode/cli/memories`（memory/ + topics/），按项目 + 名称去重，不覆盖已有记忆。
+            DeepSeek Harness 持久化记忆插件：ZCode 风格项目记忆 + 设置「记忆管理」页 + 索引式记忆注入 + agent 记忆工具（memory_save / memory_get / memory_list）+ ZCode 一键导入。
 
             ### 📦 安装
             ```bash
