@@ -20,7 +20,7 @@ dsh-memory-manager/
 ├── client.js             # Client 半：window.__ModuleLoader__.load bundle（设置「记忆管理」页 + Remote 调用）
 ├── typert.host.js        # Typert Host manifest：memoryManager Remote 服务的 schema/调用描述
 ├── memory-core.mjs       # 零依赖记忆核心：frontmatter 解析/序列化、路径清洗、索引生成、ZCode 导入
-├── scripts/install.mjs   # 本地安装脚本：复制到 profile + 写入 patch
+├── cordis.patch.yml      # dsh bundle patch（挂载行）
 ├── scripts/self-test.mjs # 独立核心自测：临时 DSH_HOME 上跑 CRUD/索引/导入（不依赖 DSH 进程）
 ├── .github/workflows/release.yml  # 打 v* 标签时构建并发布 GitHub Release
 ├── AGENTS.md             # 本文件
@@ -91,12 +91,22 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 - `importFromZCode`：**必须跳过** `MEMORY.md` / `memory_summary.md`（它们是索引不是记忆），否则导入统计里会出现"跳过"噪音。
 - 复合 id = `<projectKey>/<name>`（两者都已被清洗、不含 `/`），客户端用它做 `get/update/delete`。
 
-### 6. 本地安装 = 复制包 + composition patch
+### 6. 标准安装 = dsh bundle（package.json 声明 + 包内 cordis.patch.yml）
 
-`node scripts/install.mjs`：
-1. 复制 `package.json` + `index.js` + `client.js` + `typert.host.js` + **`memory-core.mjs`**（别漏！）到 `<DSH_HOME>/profiles/web/node_modules/dsh-memory-manager/`。
-2. 在 `<DSH_HOME>/profiles/web/cordis.patch.yml` 用 `- insert:` 新增 `memory-manager` 行（不要用普通 `- id:` 覆盖）。
+本插件是**标准 DSH bundle**：`package.json` 的 `dsh.bundle.patch` 指向包内 `cordis.patch.yml`，用官方 `dsh plugin` 命令安装：
+
+1. `dsh plugin --profile web add <本地路径或包>`：pnpm 把插件装成 profile 的 npm 依赖（本地路径走 `link:` 软链，改代码即生效），并把包名追加到 profile `package.json` 的 `dsh.profile.bundles`。`package.json` 的 `files` 必须包含 `index.js` + `client.js` + `typert.host.js` + **`memory-core.mjs`**（别漏！）+ `cordis.patch.yml`，否则 `npm pack`/发布会丢文件。
+2. 启动时 DSH 应用包内 `cordis.patch.yml` 的 `- insert:` 行挂载插件（**不要**再在 profile 的 `cordis.patch.yml` 里手工插一行，否则同一 id 重复挂载）：
+
+```yaml
+# cordis.patch.yml（随包分发）
+- insert:
+  - id: memory-manager
+    name: 'dsh-memory-manager'
+```
+
 3. 重启 DSH。**必须重启**，Host 加载、typert 注册、client bundle 注入都在启动时发生。
+4. 卸载：`dsh plugin --profile web remove dsh-memory-manager`（自动从 bundles 列表移除）。
 
 ### 7. Agent 记忆工具 + 索引注入（v1.1）
 
@@ -124,7 +134,7 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 ```bash
 npm run check            # 语法检查全部 JS
 npm test                 # 独立核心自测（68 项断言：路径清洗/frontmatter/CRUD/索引/导入/去重/目录清理/双模式注入）
-node scripts/install.mjs # 安装到本机 DSH profile
+dsh plugin --profile web add /path/to/dsh-memory-manager   # 安装/重装到本机 DSH profile
 ```
 
 改插件后**必须重启 DSH 进程**才生效。验证：

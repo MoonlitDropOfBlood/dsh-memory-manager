@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-manager",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Persistent project memory for DeepSeek Harness, ported from ZCode: ZCode-style markdown memory store (per project + global) with a full memory-management page in Settings, index-first prompt injection, agent memory tools (memory_save / memory_get / memory_list), plus one-click import from an existing ZCode memory directory.",
   "type": "module",
   "main": "index.js",
@@ -8,16 +8,21 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./typert": "./typert.host.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "client.js",
     "typert.host.js",
-    "memory-core.mjs"
+    "memory-core.mjs",
+    "cordis.patch.yml"
   ],
   "license": "MIT",
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web"
     }
@@ -30,8 +35,7 @@
     "zod": "^4.4.3"
   },
   "scripts": {
-    "install:local": "node scripts/install.mjs",
-    "check": "node --check index.js && node --check client.js && node --check typert.host.js && node --check memory-core.mjs && node --check scripts/install.mjs && node --check scripts/self-test.mjs",
+    "check": "node --check index.js && node --check client.js && node --check typert.host.js && node --check memory-core.mjs && node --check scripts/self-test.mjs",
     "test": "node scripts/self-test.mjs"
   }
 }
