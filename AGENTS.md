@@ -103,7 +103,7 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 # cordis.patch.yml（随包分发）
 - insert:
   - id: memory-manager
-    name: 'dsh-memory-manager'
+    name: '@duke-dsh-plugins/dsh-memory-manager'
 ```
 
 3. 重启 DSH。**必须重启**，Host 加载、typert 注册、client bundle 注入都在启动时发生。
