@@ -62,7 +62,8 @@ export class MemoryService extends TypertRemoteService {
 
 - `window.__ModuleLoader__.load({ id, factory })` 格式；`exports.inject = ["slots", "remote"]`。
 - **必须自挂载** Remote 命名空间：`await ctx.remote.$mount(CLIENT_REMOTE)`（`dsh-api-remotes` 只挂载官方命名空间）；浏览器无 zod，codec 用 passthrough schema。调用走 `ctx.get("remote.memoryManager")`（不要写进 inject）。
-- **设置页**注册：`ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: "memory-manager", order: 30, label: () => "记忆管理" }, MemoryManagerPage))`。
+- **设置页**注册：`ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: "memory-manager", order: 30, label: () => SETTINGS_LABEL }, MemoryManagerPage))`。
+- **设置导航图标**：DSH 0.1.x 的 `settings.section` 只投影 `id/order/label`，设置壳对每个外部 section 统一画通用齿轮（`client-ui-settings-general` 的 `navIcon()`，没有公开图标字段）。client.js 里 `registerSettingsNavIcon(SETTINGS_LABEL)` 用 MutationObserver 给 `[role="dialog"] nav button` 中文本等于 section label 的行打 `data-dsh-memory-manager-settings-nav` 标记，CSS 再隐藏 `>svg:first-child` 齿轮、用 `currentColor` mask 画 brain Lucide 图标（16px，跟随原生 hover/active 颜色）。换图标只需替换 CSS 里 data URI 的 SVG path（Lucide，24×24，stroke-width 2，stroke 用 black——mask 只取 alpha）。
 - CSS 用 `document.createElement("style")` + `ctx.effect(() => () => styleTag.remove())`；颜色一律用 `--dsw-alias-*` / `--dsw-specific-*` / `--dsw-shadow-lv2`。
 
 ### 4. Remote 返回包络（重要）
