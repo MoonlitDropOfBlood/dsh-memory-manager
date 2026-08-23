@@ -20,7 +20,7 @@
  * React unmount/remount the subtree and wipes local input state).
  */
 window.__ModuleLoader__.load({
-  id: "dsh-memory-manager",
+  id: "@duke-dsh-plugins/dsh-memory-manager",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
