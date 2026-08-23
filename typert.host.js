@@ -170,7 +170,7 @@ const listResultSchema = z.union([
 ]);
 
 export const TYPERT = {
-  package: "dsh-memory-manager",
+  package: "@duke-dsh-plugins/dsh-memory-manager",
   face: "host",
   schemas: [],
   invocations: [
