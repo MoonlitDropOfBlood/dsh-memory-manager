@@ -146,22 +146,28 @@ window.__ModuleLoader__.load({
     // client assembly mounts only the five official namespaces, so a plugin
     // must mount its own. Mirrors the invocations in typert.host.js. zod is
     // not requirable in the browser module loader, so codecs use passthrough
-    // schemas — the runtime contract only requires typeSymbol + schema.parse().
+    // schemas. Strict codecs carry BOTH shapes: DSH <= 0.1.5 validates a live
+    // schema.parse(), DSH >= 0.1.7 requires a create() factory — each side
+    // only checks its own field, so supplying both keeps every host happy.
     const passthrough = () => ({ parse: (v) => v });
-    const method = (m, params) => ({
-      id: "dsh-memory-manager#memoryManager/" + m,
-      service: "memoryManager",
-      namespace: "memoryManager",
-      method: m,
-      invocation: { kind: "direct" },
-      parameters: (params || []).map((name) => ({
-        name,
-        wire: name,
-        source: "json",
-        codec: { mode: "strict", typeSymbol: "dsh-memory-manager#MemoryManager" + m + "Request", schema: passthrough() },
-      })),
-      result: { mode: "strict", typeSymbol: "dsh-memory-manager#MemoryManager" + m + "Result", schema: passthrough() },
-    });
+    const method = (m, params) => {
+      const request = { mode: "strict", typeSymbol: "dsh-memory-manager#MemoryManager" + m + "Request", schema: passthrough(), create: () => passthrough() };
+      const result = { mode: "strict", typeSymbol: "dsh-memory-manager#MemoryManager" + m + "Result", schema: passthrough(), create: () => passthrough() };
+      return {
+        id: "dsh-memory-manager#memoryManager/" + m,
+        service: "memoryManager",
+        namespace: "memoryManager",
+        method: m,
+        invocation: { kind: "direct" },
+        parameters: (params || []).map((name) => ({
+          name,
+          wire: name,
+          source: "json",
+          codec: request,
+        })),
+        result,
+      };
+    };
     const CLIENT_REMOTE = {
       package: "dsh-memory-manager",
       descriptors: [

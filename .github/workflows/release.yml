@@ -36,8 +36,8 @@ jobs:
           node --check typert.host.js
           node --check memory-core.mjs
 
-      - name: Core self-test
-        run: node scripts/self-test.mjs
+      - name: Core self-test + typert contract
+        run: npm test
 
       - name: Package tarball
         run: npm pack

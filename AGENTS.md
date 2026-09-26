@@ -22,6 +22,7 @@ dsh-memory-manager/
 ├── memory-core.mjs       # 零依赖记忆核心：frontmatter 解析/序列化、路径清洗、索引生成、ZCode 导入
 ├── cordis.patch.yml      # dsh bundle patch（挂载行）
 ├── scripts/self-test.mjs # 独立核心自测：临时 DSH_HOME 上跑 CRUD/索引/导入（不依赖 DSH 进程）
+├── scripts/test-typert-contract.mjs # typert 双形态 codec 契约测试（Host manifest + client bundle 实跑）
 ├── .github/workflows/release.yml  # 打 v* 标签时构建并发布 GitHub Release
 ├── AGENTS.md             # 本文件
 ├── README.md
@@ -41,6 +42,12 @@ dsh-memory-manager/
 | `typert.host.js` | 描述 `memoryManager` 服务的 Remote 方法（wire schema / invocation） | `typert-loader`（扫描包的 `./typert` 导出） |
 
 关键名字必须一致：类名 `MemoryService`、服务键 `memoryManager`、invocation id `dsh-memory-manager#memoryManager/<method>`、`package.json` exports 含 `./package.json`。
+
+**strict codec 必须是双形态**（0.1.7-rc.1 加载不上的根因，v1.4.0 修复）：DSH 0.1.7 把 codec 校验契约从 `codec.schema`（活的 zod 实例）换成了 `codec.create()` 工厂——
+- `<= 0.1.5` 的 typert-loader/registry 校验 `typeof codec.schema.parse === "function"`，忽略 `create`；
+- `>= 0.1.7` 校验 `typeof codec.create === "function"`（宿主网关运行时也调 `codec.create().parse(...)`），忽略 `schema`。
+
+两边各查各的字段，所以每个 strict codec **同时带 `schema` 和 `create: () => schema`** 就能通过所有 0.1.x 校验器（已实测 0.1.0-rc.7 / 0.1.5 / 0.1.6-alpha.2 / 0.1.7-rc.1 四个版本的 `validateTypertManifest` 全 PASS）。`typert.host.js` 与 `client.js` 的 `CLIENT_REMOTE` 都要照此写；回归由 `scripts/test-typert-contract.mjs` 把守（含跑真实 client bundle 抓 `$mount` 的贡献）。
 
 ### 2. Host 半：类插件 + Remote 方法
 
@@ -97,6 +104,8 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 本插件是**标准 DSH bundle**：`package.json` 的 `dsh.bundle.patch` 指向包内 `cordis.patch.yml`，用官方 `dsh plugin` 命令安装：
 
 1. `dsh plugin --profile web add <本地路径或包>`：pnpm 把插件装成 profile 的 npm 依赖（本地路径走 `link:` 软链，改代码即生效），并把包名追加到 profile `package.json` 的 `dsh.profile.bundles`。`package.json` 的 `files` 必须包含 `index.js` + `client.js` + `typert.host.js` + **`memory-core.mjs`**（别漏！）+ `cordis.patch.yml`，否则 `npm pack`/发布会丢文件。
+
+   **link: 安装的依赖解析坑（v1.4.1 修复，0.1.7-rc.2 上"加载失败被当成不兼容"的根因）**：`link:` 软链的 realpath 是开发目录（如 `D:\ai-projects\dsh\dsh-memory-manager`），Node 从这里向上找 `node_modules`——**不会**经过 `<DSH_HOME>/profiles/node_modules`（registry 装的包向上解析时恰好命中这个共享依赖目录，所以 registry 安装没此问题）。因此本地开发**必须先 `pnpm install`**，把 `@deepseek-ai/cordis` / `@deepseek-ai/dsh-typert-protocol`（以及动态 import 的 `@deepseek-ai/dsh-tools`）实体化到本目录 `node_modules`，否则 Host 半 import 直接 `Cannot find package`，插件表现为"加载不上/不兼容"。这些包已声明在 `devDependencies`（只影响本地开发，不进发布产物；dsh-deveco 同款模式，借助 pnpm auto-install-peers）。devDep 的 typert-protocol 钉 `^0.1.7-rc.1` 以解析到与本机宿主一致的 0.1.7-rc.2（`^0.1.0-rc.7` 在 prerelease 语义下只会解析到 0.1.0-rc.8）。诊断手法：在 `<DSH_HOME>\profiles\web` 目录下 `node --input-type=module -e "await import('@duke-dsh-plugins/dsh-memory-manager')"`，PASS/FAIL 立判。
 2. 启动时 DSH 应用包内 `cordis.patch.yml` 的 `- insert:` 行挂载插件（**不要**再在 profile 的 `cordis.patch.yml` 里手工插一行，否则同一 id 重复挂载）：
 
 ```yaml
@@ -133,8 +142,9 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 ## 开发 / 验证
 
 ```bash
+pnpm install           # 首次/换机必做：实体化 @deepseek-ai peer 依赖，link: 安装才能被宿主 import（见第 6 节）
 npm run check            # 语法检查全部 JS
-npm test                 # 独立核心自测（68 项断言：路径清洗/frontmatter/CRUD/索引/导入/去重/目录清理/双模式注入）
+npm test                 # 独立核心自测（68 项断言）+ typert 双形态 codec 契约测试（281 项检查）
 dsh plugin --profile web add /path/to/dsh-memory-manager   # 安装/重装到本机 DSH profile
 ```
 
@@ -158,3 +168,4 @@ dsh plugin --profile web add /path/to/dsh-memory-manager   # 安装/重装到本
 - 删除是**永久性**的，UI 里已加二次确认。
 - 记忆正文与描述中可能出现任意 Markdown / 特殊字符，序列化必须走 `yamlScalar`，不要手拼 YAML。
 - `typert.host.js` 的 result schema 是 **strict**：返回结构必须与 schema 完全一致（字段不缺席、类型正确），否则网关校验失败。
+- **宿主版本声明**：`package.json` 顶层 `engines.dsh`（当前 `^0.1.0-rc.7`，与 typert-protocol peer 同区间）。dshmarket 读 `manifest.engines.dsh`（顶层优先，回落 `dsh.engines.dsh`）加上 `dsh*` peerDependencies 的交集来显示「宿主要求」、驱动「适配本机 DSH 版本」过滤和安装/更新阻断；引擎区间是**严格**判定（低于下限或高于上限都算 incompatible，`includePrerelease`）。放宽/收紧支持范围时同步改这里，并用本机 dshmarket 的 `deriveHostCompatibility` 跑一遍确认 0.1.5-rc.3 与 0.1.7-rc.1 都判 compatible。
