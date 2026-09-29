@@ -118,7 +118,7 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 ```
 
 3. 重启 DSH。**必须重启**，Host 加载、typert 注册、client bundle 注入都在启动时发生。
-4. 卸载：`dsh plugin --profile web remove dsh-memory-manager`（自动从 bundles 列表移除）。
+4. 卸载/切换安装形态的坑（v1.4.2 实测）：`dsh plugin remove` **必须传完整 scoped 名** `@duke-dsh-plugins/dsh-memory-manager`（传裸名 `dsh-memory-manager` 会 `ERR_PNPM_CANNOT_REMOVE_MISSING_DEPS`，因为 profile 依赖存的是 scoped 键）；profile 里已有 `link:` 依赖时，`dsh plugin add <npm 包名>` 会**保留旧 link 声明原样 upsert**（"Already up to date"，不会切到 registry）——要从开发态切到正式态必须**先 scoped remove 再 add**。registry 安装是 pnpm 硬链实体化、包内自带完整 `node_modules`（cordis/typert-protocol/zod 全在里面），与开发目录完全解耦；验证手法：profile 下 `node --input-type=module -e "await import('@duke-dsh-plugins/dsh-memory-manager')"` + `dsh --profile web --dump-config` 无 skipping 行。
 
 ### 7. Agent 记忆工具 + 索引注入（v1.1）
 
