@@ -49,6 +49,8 @@ dsh-memory-manager/
 
 两边各查各的字段，所以每个 strict codec **同时带 `schema` 和 `create: () => schema`** 就能通过所有 0.1.x 校验器（已实测 0.1.0-rc.7 / 0.1.5 / 0.1.6-alpha.2 / 0.1.7-rc.1 四个版本的 `validateTypertManifest` 全 PASS）。`typert.host.js` 与 `client.js` 的 `CLIENT_REMOTE` 都要照此写；回归由 `scripts/test-typert-contract.mjs` 把守（含跑真实 client bundle 抓 `$mount` 的贡献）。
 
+**0.2.0 的启动闸门会静默禁用整包（v1.4.2 修复的加载根因）**：DSH 0.2.0 起 `dsh-app-boot` 在 import 任何插件代码之前对每个 bundle 跑 `evaluatePluginCompatibility`——遍历 `peerDependencies` 里名字为 `@deepseek-ai/dsh` 或以 `@deepseek-ai/dsh-` 开头的条目，逐条 `semver.satisfies(runtime, range, { includePrerelease: true })`，任一不满足就 `row.disabled = true`（stderr 一行 `skipping profile bundle ...`），插件代码一行都没被 import，现象即"加载不上"。本插件命中的 peer 是 `@deepseek-ai/dsh-typert-protocol`，范围必须写成**显式双线** `^0.1.0-rc.7 || ^0.2.0-rc.1`（注意 `^0.2.0` 不匹配 `0.2.0-rc.1`，prerelease 必须显式写 rc 线），并与顶层 `engines.dsh` 同步（dshmarket 读三声明合取）。0.2.0-rc.1 上逐面复核**全部未变**：typert codec 仍只认 `create()` 工厂（双形态继续必需）、`TypertRemoteService`/`Remote`/`remoteMethods`、cordis `Service.init`、`systemPrompt.section({name,order,text})`、`tools` 服务与 `defineTool` DSL、`exec.agent.session.header.cwd`、`settings.section` 槽（id/order/label）、`__ModuleLoader__.load` bundle 契约、`ctx.remote.$mount`、`workspaceRegistry.list()`。回归由 `npm run e2e`（`verify-real-install.mjs`）把守：真闸门 + 真安装的 cordis/typert-protocol 上激活 + 真 TypertRegistry + 真 dsh-tools 工具回路 + client bundle apply，全绿且零跳过才算数。
+
 ### 2. Host 半：类插件 + Remote 方法
 
 ```js
@@ -105,7 +107,7 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 
 1. `dsh plugin --profile web add <本地路径或包>`：pnpm 把插件装成 profile 的 npm 依赖（本地路径走 `link:` 软链，改代码即生效），并把包名追加到 profile `package.json` 的 `dsh.profile.bundles`。`package.json` 的 `files` 必须包含 `index.js` + `client.js` + `typert.host.js` + **`memory-core.mjs`**（别漏！）+ `cordis.patch.yml`，否则 `npm pack`/发布会丢文件。
 
-   **link: 安装的依赖解析坑（v1.4.1 修复，0.1.7-rc.2 上"加载失败被当成不兼容"的根因）**：`link:` 软链的 realpath 是开发目录（如 `D:\ai-projects\dsh\dsh-memory-manager`），Node 从这里向上找 `node_modules`——**不会**经过 `<DSH_HOME>/profiles/node_modules`（registry 装的包向上解析时恰好命中这个共享依赖目录，所以 registry 安装没此问题）。因此本地开发**必须先 `pnpm install`**，把 `@deepseek-ai/cordis` / `@deepseek-ai/dsh-typert-protocol`（以及动态 import 的 `@deepseek-ai/dsh-tools`）实体化到本目录 `node_modules`，否则 Host 半 import 直接 `Cannot find package`，插件表现为"加载不上/不兼容"。这些包已声明在 `devDependencies`（只影响本地开发，不进发布产物；dsh-deveco 同款模式，借助 pnpm auto-install-peers）。devDep 的 typert-protocol 钉 `^0.1.7-rc.1` 以解析到与本机宿主一致的 0.1.7-rc.2（`^0.1.0-rc.7` 在 prerelease 语义下只会解析到 0.1.0-rc.8）。诊断手法：在 `<DSH_HOME>\profiles\web` 目录下 `node --input-type=module -e "await import('@duke-dsh-plugins/dsh-memory-manager')"`，PASS/FAIL 立判。
+   **link: 安装的依赖解析坑（v1.4.1 修复，0.1.7-rc.2 上"加载失败被当成不兼容"的根因）**：`link:` 软链的 realpath 是开发目录（如 `D:\ai-projects\dsh\dsh-memory-manager`），Node 从这里向上找 `node_modules`——**不会**经过 `<DSH_HOME>/profiles/node_modules`（registry 装的包向上解析时恰好命中这个共享依赖目录，所以 registry 安装没此问题）。因此本地开发**必须先 `pnpm install`**，把 `@deepseek-ai/cordis` / `@deepseek-ai/dsh-typert-protocol`（以及动态 import 的 `@deepseek-ai/dsh-tools`）实体化到本目录 `node_modules`，否则 Host 半 import 直接 `Cannot find package`，插件表现为"加载不上/不兼容"。这些包已声明在 `devDependencies`（只影响本地开发，不进发布产物；dsh-deveco 同款模式，借助 pnpm auto-install-peers）。devDep 的 typert-protocol 范围要跟着**本机宿主**走（当前钉 `^0.2.0-rc.1` 解析到 0.2.0-rc.1；prerelease 语义下 `^0.1.0-rc.7` 只会解析到 0.1.0-rc.8，换宿主版本时同步改）。诊断手法：在 `<DSH_HOME>\profiles\web` 目录下 `node --input-type=module -e "await import('@duke-dsh-plugins/dsh-memory-manager')"`，PASS/FAIL 立判。
 2. 启动时 DSH 应用包内 `cordis.patch.yml` 的 `- insert:` 行挂载插件（**不要**再在 profile 的 `cordis.patch.yml` 里手工插一行，否则同一 id 重复挂载）：
 
 ```yaml
@@ -145,7 +147,9 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 pnpm install           # 首次/换机必做：实体化 @deepseek-ai peer 依赖，link: 安装才能被宿主 import（见第 6 节）
 npm run check            # 语法检查全部 JS
 npm test                 # 独立核心自测（68 项断言）+ typert 双形态 codec 契约测试（281 项检查）
+npm run e2e              # 端到端：对本机真实 DSH 安装（0.2.0-rc.1）跑启动闸门/宿主激活/CRUD/真注册表/工具回路/client apply
 dsh plugin --profile web add /path/to/dsh-memory-manager   # 安装/重装到本机 DSH profile
+dsh --profile web --dump-config    # stderr 无本包 skipping 行 = 启动闸门放行（重启前先跑这条）
 ```
 
 改插件后**必须重启 DSH 进程**才生效。验证：
@@ -168,4 +172,4 @@ dsh plugin --profile web add /path/to/dsh-memory-manager   # 安装/重装到本
 - 删除是**永久性**的，UI 里已加二次确认。
 - 记忆正文与描述中可能出现任意 Markdown / 特殊字符，序列化必须走 `yamlScalar`，不要手拼 YAML。
 - `typert.host.js` 的 result schema 是 **strict**：返回结构必须与 schema 完全一致（字段不缺席、类型正确），否则网关校验失败。
-- **宿主版本声明**：`package.json` 顶层 `engines.dsh`（当前 `^0.1.0-rc.7`，与 typert-protocol peer 同区间）。dshmarket 读 `manifest.engines.dsh`（顶层优先，回落 `dsh.engines.dsh`）加上 `dsh*` peerDependencies 的交集来显示「宿主要求」、驱动「适配本机 DSH 版本」过滤和安装/更新阻断；引擎区间是**严格**判定（低于下限或高于上限都算 incompatible，`includePrerelease`）。放宽/收紧支持范围时同步改这里，并用本机 dshmarket 的 `deriveHostCompatibility` 跑一遍确认 0.1.5-rc.3 与 0.1.7-rc.1 都判 compatible。
+- **宿主版本声明**：`package.json` 顶层 `engines.dsh`（当前 `^0.1.0-rc.7 || ^0.2.0-rc.1`，与 typert-protocol peer 同区间；两处必须同步，见第 1 节 0.2.0 闸门段落）。dshmarket 读 `manifest.engines.dsh`（顶层优先，回落 `dsh.engines.dsh`）加上 `dsh*` peerDependencies 的交集来显示「宿主要求」、驱动「适配本机 DSH 版本」过滤和安装/更新阻断；引擎区间是**严格**判定（低于下限或高于上限都算 incompatible，`includePrerelease`）。放宽/收紧支持范围时同步改这里，并用本机 dshmarket 的 `deriveHostCompatibility` 跑一遍确认 0.1.5-rc.3、0.1.7-rc.1 与 0.2.0-rc.1 都判 compatible。

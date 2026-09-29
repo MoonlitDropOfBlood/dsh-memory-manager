@@ -49,6 +49,10 @@ dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-memory-ma
 
 > `dsh plugin add` 把插件装成 profile 的 npm 依赖并追加到 `dsh.profile.bundles`，启动时 DSH 自动应用包内的 `cordis.patch.yml` 挂载插件。卸载：`dsh plugin --profile web remove dsh-memory-manager`。
 
+### 宿主兼容性
+
+支持 **DSH 0.1.0-rc.7 ~ 0.2.0-rc.x**（`engines.dsh: ^0.1.0-rc.7 || ^0.2.0-rc.1`，已在本机 0.2.0-rc.1 宿主端到端验证）。DSH 0.2.0 起宿主会在启动时按 `peerDependencies` 的 `@deepseek-ai/dsh*` 声明做兼容预检，范围不满足的 bundle 会被静默跳过——如果升级宿主后插件消失，先确认版本声明覆盖了新宿主，再跑 `npm run e2e`（对真实安装验证闸门、Host 激活、CRUD、TypertRegistry 与 client bundle）。
+
 ## 使用
 
 1. 打开 **设置**，侧栏出现 **记忆管理** 页。

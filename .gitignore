@@ -4,3 +4,7 @@ node_modules/
 .e2e-tmp/
 *.log
 .DS_Store
+# CI 明确无 committed lockfile（release.yml 注释），本地安装器产物不入库
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
