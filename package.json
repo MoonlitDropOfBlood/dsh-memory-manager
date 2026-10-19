@@ -1,15 +1,24 @@
 {
   "name": "@duke-dsh-plugins/dsh-memory-manager",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Persistent project memory for DeepSeek Harness, ported from ZCode: ZCode-style markdown memory store (per project + global) with a full memory-management page in Settings, index-first prompt injection, agent memory tools (memory_save / memory_get / memory_list), plus one-click import from an existing ZCode memory directory.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MoonlitDropOfBlood/dsh-memory-manager.git"
   },
   "homepage": "https://github.com/MoonlitDropOfBlood/dsh-memory-manager",
-  "bugs": { "url": "https://github.com/MoonlitDropOfBlood/dsh-memory-manager/issues" },
-  "publishConfig": { "access": "public" },
-  "keywords": ["dsh", "deepseek-harness", "plugin", "memory"],
+  "bugs": {
+    "url": "https://github.com/MoonlitDropOfBlood/dsh-memory-manager/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "memory"
+  ],
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -17,6 +26,7 @@
     "./client": "./client.js",
     "./typert": "./typert.host.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
@@ -24,7 +34,8 @@
     "client.js",
     "typert.host.js",
     "memory-core.mjs",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "icon.svg"
   ],
   "license": "MIT",
   "engines": {
