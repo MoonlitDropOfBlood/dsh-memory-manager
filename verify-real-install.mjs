@@ -30,6 +30,11 @@
  *   6. Client bundle — factory + apply() run clean under the real loader
  *      contract (registration id = package name, inject/apply exports,
  *      style tag lifecycle, settings.section registration shape).
+ *   7. Settings nav icon — the `settings.section.icon` slot registered for the
+ *      memory-manager section renders a 16px currentColor brain glyph and
+ *      honours the owner's size prop, and the legacy MutationObserver marker
+ *      lands on a pre-0.2.2 nav row (direct <svg> gear) but NOT on a 0.2.2
+ *      nav row (glyph inside span.navIcon) — the two paths must never paint.
  *
  * Run: node verify-real-install.mjs
  */
@@ -371,22 +376,137 @@ console.log("\n[4] client bundle apply under the real loader contract");
 
 // Minimal but observable DOM: enough for the bundle's style tag + nav icon
 // observer, and it records what happened so the assertions below are real.
-function makeDom() {
-  const appended = [];
-  const element = (tag) => ({
-    tagName: tag,
-    textContent: "",
+const SETTINGS_LABEL = "记忆管理";
+const SETTINGS_NAV_MARKER = "data-dsh-memory-manager-settings-nav";
+
+/**
+ * A DOM-ish element: attributes, children, text and a removable() stub.
+ * @param {string} tag - element tag name.
+ * @param {{ className?: string, textContent?: string, children?: object[] }} [opts] - initial state.
+ * @returns {object} the element stub.
+ */
+function makeElement(tag, opts = {}) {
+  const attributes = new Map();
+  return {
+    tagName: String(tag).toUpperCase(),
+    className: opts.className || "",
+    textContent: opts.textContent || "",
+    children: opts.children || [],
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
+    hasAttribute(name) {
+      return attributes.has(name);
+    },
+    getAttribute(name) {
+      return attributes.has(name) ? attributes.get(name) : null;
+    },
     remove() {
       this.removed = true;
     },
+  };
+}
+
+/**
+ * One settings-nav row in a given shell shape.
+ * @param {"modern"|"legacy"} shape - "modern": DSH >= 0.2.2 puts the glyph in
+ *   a span.navIcon wrapper next to a span.navLabel (no direct <svg> child);
+ *   "legacy": DSH <= 0.2.1 paints the generic gear as a DIRECT <svg> child.
+ * @returns {object} the nav button stub.
+ */
+function makeNavRow(shape) {
+  if (shape === "legacy") {
+    return makeElement("button", {
+      className: "navRow",
+      textContent: SETTINGS_LABEL,
+      children: [makeElement("svg", { className: "shellGear" })],
+    });
+  }
+  return makeElement("button", {
+    className: "navRow",
+    textContent: SETTINGS_LABEL,
+    children: [
+      makeElement("span", { className: "navIcon" }),
+      makeElement("span", { className: "navLabel", textContent: SETTINGS_LABEL }),
+    ],
   });
+}
+
+/**
+ * The fake document. The settings shell's nav rows are the only queryable
+ * collection the bundle touches, plus the marked rows it must clean up.
+ * @param {object[]} [navRows] - the nav buttons the shell renders.
+ * @returns {object} the document stub.
+ */
+function makeDom(navRows = []) {
+  const appended = [];
   const head = { appendChild: (el) => appended.push(el) };
   return {
     appended,
     head,
-    createElement: (tag) => element(tag),
-    querySelectorAll: () => [],
+    createElement: (tag) => makeElement(tag),
+    querySelectorAll: (selector) => {
+      if (selector === '[role="dialog"] nav button') return navRows;
+      if (selector === "[" + SETTINGS_NAV_MARKER + "]") {
+        return navRows.filter((row) => row.hasAttribute(SETTINGS_NAV_MARKER));
+      }
+      return [];
+    },
     body: {},
+  };
+}
+
+// Every MutationObserver the bundle creates, so the harness can assert what
+// the legacy nav observer watched and that it was disconnected on dispose.
+const mutationObservers = [];
+
+/**
+ * Install a recording MutationObserver stub (no DOM mutation happens here —
+ * the bundle's own sync() runs synchronously at effect time).
+ */
+function installMutationObserverStub() {
+  mutationObservers.length = 0;
+  globalThis.MutationObserver = class {
+    constructor(callback) {
+      this.callback = callback;
+      this.observed = null;
+      this.options = null;
+      this.disconnected = false;
+      mutationObservers.push(this);
+    }
+
+    observe(target, options) {
+      this.observed = target;
+      this.options = options;
+    }
+
+    disconnect() {
+      this.disconnected = true;
+    }
+  };
+}
+
+/**
+ * A describable React stub. The nav icon component's output must be
+ * inspectable, so createElement returns a plain { type, props, children }
+ * record instead of null. Nothing in this harness renders a component tree,
+ * so the richer value cannot change any other check.
+ * @returns {object} the react stub.
+ */
+function makeReactStub() {
+  return {
+    createElement: (type, props, ...children) => ({
+      type,
+      props: props || {},
+      children: children.flat(),
+    }),
+    useState: (v) => [v, () => {}],
+    useCallback: (f) => f,
+    useEffect: () => {},
+    useMemo: (f) => f(),
   };
 }
 
@@ -400,15 +520,7 @@ try {
       },
     },
   };
-  globalThis.MutationObserver = class {
-    constructor(callback) {
-      this.callback = callback;
-    }
-
-    observe() {}
-
-    disconnect() {}
-  };
+  installMutationObserverStub();
   await import(pathToFileURL(path.join(here, "client.js")).href);
   if (!clientResult) throw new Error("client.js never called window.__ModuleLoader__.load");
   if (clientResult.id !== PKG) throw new Error(`registration id ${clientResult.id} must equal the package name ${PKG} (client-modules route check)`);
@@ -433,7 +545,9 @@ try {
     },
     slots: {
       inject: (name, register) => {
-        if (name !== "settings.section") throw new Error(`unexpected slot ${name}`);
+        if (name !== "settings.section" && name !== "settings.section.icon") {
+          throw new Error(`unexpected slot ${name}`);
+        }
         register();
       },
       register: (declaration, component) => {
@@ -443,9 +557,7 @@ try {
   };
   globalThis.document = dom;
   const moduleExports = clientResult.factory((spec) => {
-    if (spec === "react" || spec === "react/jsx-runtime") {
-      return { createElement: () => null, useState: (v) => [v, () => {}], useCallback: (f) => f, useEffect: () => {}, useMemo: (f) => f() };
-    }
+    if (spec === "react" || spec === "react/jsx-runtime") return makeReactStub();
     if (spec === "@deepseek-ai/dsh-client-ui-primitives") return { Button: () => null };
     throw new Error(`client.js factory must not require unexpected module: ${spec}`);
   });
@@ -554,6 +666,164 @@ console.log("\n[6] memory tools through the installation's real dsh-tools");
       const listed = await registered[2].execute({ query: "工具回路" }, exec);
       if (!listed || listed.total !== 1 || listed.items.length !== 1) throw new Error(`memory_list returned ${JSON.stringify(listed)}`);
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Settings nav icon: the DSH >= 0.2.2 slot + the legacy marker gate.
+// ---------------------------------------------------------------------------
+
+console.log("\n[7] settings nav icon slot (DSH >= 0.2.2) + legacy nav marker gating");
+
+if (!clientResult) {
+  skip("settings nav icon slot", "the client bundle never loaded");
+} else {
+  // Both shell shapes side by side: the 0.2.2 row (glyph inside span.navIcon)
+  // and the pre-0.2.2 row (the shell gear is a DIRECT <svg> child). The legacy
+  // marker must land on the second one only — marking the 0.2.2 row would paint
+  // our brain NEXT to the shell's own gear (the bug this guard exists for).
+  const modernRow = makeNavRow("modern");
+  const legacyRow = makeNavRow("legacy");
+  const dom = makeDom([modernRow, legacyRow]);
+  const effects = [];
+  const slotRegistrations = [];
+  installMutationObserverStub();
+  globalThis.document = dom;
+
+  try {
+    const moduleExports = clientResult.factory((spec) => {
+      if (spec === "react" || spec === "react/jsx-runtime") return makeReactStub();
+      if (spec === "@deepseek-ai/dsh-client-ui-primitives") return { Button: () => null };
+      throw new Error(`client.js factory must not require unexpected module: ${spec}`);
+    });
+    await moduleExports.apply({
+      remote: {
+        $mount: async () => () => {},
+      },
+      get: (name) => (name === "remote.memoryManager" ? { list: async () => ({ ok: true, value: {} }) } : {}),
+      effect: (fn) => {
+        const disposer = fn();
+        effects.push(typeof disposer === "function" ? disposer : () => {});
+        return disposer;
+      },
+      slots: {
+        inject: (name, register) => {
+          if (name !== "settings.section" && name !== "settings.section.icon") {
+            throw new Error(`unexpected slot ${name}`);
+          }
+          register();
+        },
+        register: (declaration, component) => {
+          slotRegistrations.push({ declaration, component });
+        },
+      },
+    });
+
+    /** @returns {object} the registered settings.section.icon slot. */
+    const iconRegistration = () => {
+      const icon = slotRegistrations.find((r) => r.declaration.name === "settings.section.icon");
+      if (!icon) throw new Error("apply() never registered the settings.section.icon slot");
+      return icon;
+    };
+
+    await attempt("apply() registers a settings.section.icon slot for the memory-manager section", async () => {
+      const icon = iconRegistration();
+      const section = slotRegistrations.find((r) => r.declaration.name === "settings.section");
+      if (!section) throw new Error("apply() never registered the settings.section slot");
+      if (icon.declaration.id !== "memory-manager") {
+        throw new Error(`settings.section.icon id mismatch: ${JSON.stringify(icon.declaration)}`);
+      }
+      // The shell addresses the icon slot by the section id — a mismatch would
+      // leave the row with the shell's generic gear only.
+      if (icon.declaration.id !== section.declaration.id) {
+        throw new Error(
+          `the icon slot must carry the section id: icon=${icon.declaration.id} section=${section.declaration.id}`,
+        );
+      }
+      if (icon.declaration.order !== 30) {
+        throw new Error(`settings.section.icon order mismatch: ${JSON.stringify(icon.declaration)}`);
+      }
+      if (typeof icon.declaration.label !== "function" || icon.declaration.label() !== SETTINGS_LABEL) {
+        throw new Error("settings.section.icon label() must return the 记忆管理 label");
+      }
+      if (typeof icon.component !== "function") {
+        throw new Error("settings.section.icon must carry the icon component");
+      }
+    });
+
+    await attempt("the nav icon renders a 16px currentColor brain glyph (3 path children)", async () => {
+      const icon = iconRegistration();
+      const element = icon.component({ size: 16, active: false });
+      if (!element || element.type !== "svg") {
+        throw new Error(`the icon component must return an svg element, got ${JSON.stringify(element && element.type)}`);
+      }
+      if (element.props.width !== 16 || element.props.height !== 16) {
+        throw new Error(`the icon must be 16x16, got ${element.props.width}x${element.props.height}`);
+      }
+      if (element.props.stroke !== "currentColor") {
+        throw new Error(`the icon stroke must be currentColor, got ${element.props.stroke}`);
+      }
+      if (element.props.viewBox !== "0 0 24 24") {
+        throw new Error(`the icon viewBox must be "0 0 24 24", got ${element.props.viewBox}`);
+      }
+      if (element.props.strokeWidth !== 2) {
+        throw new Error(`the icon strokeWidth must be 2, got ${element.props.strokeWidth}`);
+      }
+      if (!Array.isArray(element.children) || element.children.length !== 3) {
+        throw new Error(`the icon must have 3 path children, got ${element.children && element.children.length}`);
+      }
+      for (const child of element.children) {
+        if (!child || child.type !== "path") {
+          throw new Error(`every icon child must be a path, got ${child && child.type}`);
+        }
+      }
+    });
+
+    await attempt("the nav icon honours the owner's size prop (and falls back to 16)", async () => {
+      const icon = iconRegistration();
+      const big = icon.component({ size: 24, active: true });
+      if (!big || big.props.width !== 24 || big.props.height !== 24) {
+        throw new Error(`a size of 24 must render 24x24, got ${big && big.props.width}x${big && big.props.height}`);
+      }
+      const fallback = icon.component({});
+      if (!fallback || fallback.props.width !== 16 || fallback.props.height !== 16) {
+        throw new Error(
+          `a missing size must fall back to 16x16, got ${fallback && fallback.props.width}x${fallback && fallback.props.height}`,
+        );
+      }
+    });
+
+    await attempt("the legacy nav marker is NOT applied to a 0.2.2 nav row (the shell owns the glyph)", async () => {
+      if (modernRow.hasAttribute(SETTINGS_NAV_MARKER)) {
+        throw new Error("the 0.2.2 nav row was marked — our brain and the shell gear would render together");
+      }
+    });
+
+    await attempt("the legacy nav marker IS applied to a pre-0.2.2 nav row (direct <svg> gear)", async () => {
+      if (!legacyRow.hasAttribute(SETTINGS_NAV_MARKER)) {
+        throw new Error("the legacy nav row was not marked — the shell gear would stay visible");
+      }
+    });
+
+    effects.forEach((dispose) => dispose());
+
+    await attempt("the legacy nav marker is cleared again when the plugin is disposed", async () => {
+      if (legacyRow.hasAttribute(SETTINGS_NAV_MARKER)) {
+        throw new Error("the disposer left the legacy marker behind");
+      }
+    });
+
+    await attempt("the legacy nav observer watches document.body and is disconnected on dispose", async () => {
+      const observer = mutationObservers[mutationObservers.length - 1];
+      if (!observer) throw new Error("apply() created no MutationObserver for the legacy nav row");
+      if (observer.observed !== dom.body) throw new Error("the nav observer must watch document.body");
+      if (!observer.disconnected) throw new Error("the nav observer must be disconnected on dispose");
+    });
+  } catch (error) {
+    fail("settings nav icon slot (DSH >= 0.2.2) + legacy nav marker gating", error);
+  } finally {
+    delete globalThis.document;
+    delete globalThis.MutationObserver;
   }
 }
 

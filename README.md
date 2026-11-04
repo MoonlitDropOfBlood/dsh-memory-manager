@@ -23,7 +23,7 @@
 | 功能 | 说明 |
 |---|---|
 | 🧠 ZCode 记忆移植 | 沿用 ZCode 的记忆文件格式（YAML frontmatter + 正文）、类型体系（user / feedback / reference / project / other）与按项目分目录的存储布局 |
-| ⚙️ 设置中的记忆管理 | 设置面板新增 **记忆管理** 页：搜索、项目/类型筛选、按项目分组、新建 / 编辑 / 删除（二次确认）/ 查看正文 |
+| ⚙️ 设置中的记忆管理 | 设置面板新增 **记忆管理** 页（侧栏带 brain 图标）：搜索、项目/类型筛选、按项目分组、新建 / 编辑 / 删除（二次确认）/ 查看正文 |
 | 🔄 自动加载到对话 | 每次模型调用自动把「当前项目 + 全局」的记忆**索引**（名称 + 描述）作为系统提示注入给智能体，省上下文；也可切换为附带正文截断的旧模式 |
 | 🤖 Agent 记忆工具 | 注册 `memory_save` / `memory_get` / `memory_list` 三个模型工具：agent 可按需读取记忆全文、跨项目搜索，并在发现用户偏好 / 纠正 / 项目约定时**自己回写记忆**（同名即更新，`origin: agent`） |
 | 📥 从 ZCode 导入 | 一键扫描 `~/.zcode/cli/memories`（`memory/` + `topics/`），按项目 + 名称去重，不覆盖已有记忆 |
@@ -51,7 +51,9 @@ dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-memory-ma
 
 ### 宿主兼容性
 
-支持 **DSH 0.1.0-rc.7 ~ 0.2.0-rc.x**（`engines.dsh: ^0.1.0-rc.7 || ^0.2.0-rc.1`，已在本机 0.2.0-rc.1 宿主端到端验证）。DSH 0.2.0 起宿主会在启动时按 `peerDependencies` 的 `@deepseek-ai/dsh*` 声明做兼容预检，范围不满足的 bundle 会被静默跳过——如果升级宿主后插件消失，先确认版本声明覆盖了新宿主，再跑 `npm run e2e`（对真实安装验证闸门、Host 激活、CRUD、TypertRegistry 与 client bundle）。
+支持 **DSH 0.1.0-rc.7 ~ 0.2.x**（`engines.dsh: ^0.1.0-rc.7 || ^0.2.0-rc.1`，已在本机 0.2.0-rc.1 与 0.2.2-rc.1 宿主端到端验证）。DSH 0.2.0 起宿主会在启动时按 `peerDependencies` 的 `@deepseek-ai/dsh*` 声明做兼容预检，范围不满足的 bundle 会被静默跳过——如果升级宿主后插件消失，先确认版本声明覆盖了新宿主，再跑 `npm run e2e`（对真实安装验证闸门、Host 激活、CRUD、TypertRegistry 与 client bundle）。
+
+DSH 0.2.2 起设置壳把导航图标改为从 `settings.section.icon` 槽按行 id 取（`settings.section` 本身仍只投影 id/order/label），本插件已原生注册侧栏 brain 图标；0.2.1 及更早的宿主没有该槽，继续走 CSS 兜底路径，两条路径互斥、不会同时渲染。
 
 ## 使用
 
@@ -69,6 +71,7 @@ dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-memory-ma
 DSH Web UI
   └─ client.js (window.__ModuleLoader__.load bundle)
        └─ settings.section 注册「记忆管理」页
+            ├─ settings.section.icon 注册侧栏 brain 图标（DSH >= 0.2.2 原生槽；旧宿主走 CSS 兜底）
             └─ ctx.remote.memoryManager.{list|get|create|update|delete|importZCode|getConfig|setConfig}
                  └─ index.js (MemoryService, TypertRemoteService)
                       ├─ systemPrompt.section（order 90）→ 每次模型调用注入「记忆索引」段落

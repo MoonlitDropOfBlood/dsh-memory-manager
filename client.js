@@ -94,26 +94,96 @@ window.__ModuleLoader__.load({
 .mm-import-num{font-weight:600;color:var(--dsw-alias-label-primary)}
 .mm-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 
-/* Settings nav icon: DSH 0.1.x settings.section only projects id/order/
-   label, and the settings shell paints a generic gear for every external
-   section (client-ui-settings-general's navIcon()). registerSettingsNavIcon
-   marks our own nav row; hide the shell's gear and draw the brain Lucide
-   glyph as a currentColor mask so it follows the native nav hover/active
-   colors without changing the shell's 16px icon rhythm. */
+/* Legacy settings nav icon (DSH <= 0.2.1 only): those hosts project no icon
+   for an external settings.section and paint a generic gear as a DIRECT child
+   of the nav button. markLegacySettingsNavRow marks our own row on that DOM
+   shape only (a direct <svg> child), so the shell's gear is hidden and the
+   brain Lucide glyph is drawn as a currentColor mask — it then follows the
+   native nav hover/active colors without changing the shell's 16px icon
+   rhythm. On DSH >= 0.2.2 the shell owns the glyph inside a span.navIcon
+   wrapper and renders it from the settings.section.icon slot, so no row is
+   ever marked and this CSS stays inert (marking it would draw the brain NEXT
+   to the shell's own glyph — two icons in one row). */
 [data-dsh-memory-manager-settings-nav]>svg:first-child{display:none}
 [data-dsh-memory-manager-settings-nav]::before{content:'';flex:none;width:16px;height:16px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z'/%3E%3Cpath d='M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z'/%3E%3Cpath d='M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z'/%3E%3Cpath d='M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z'/%3E%3Cpath d='M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4'/%3E%3C/svg%3E") center/contain no-repeat}
 `;
 
     // ---- Settings nav icon --------------------------------------------------
-    // DSH 0.1.x does not yet carry an icon through the settings.section
-    // registration contract: its shell projects only id/order/label and
-    // paints a generic gear for every external section. Mark only this
-    // plugin's localized nav row so the CSS above can replace the fallback
-    // gear; the disposer clears the marker for HMR / plugin disable.
+    // DSH >= 0.2.2 ships a dedicated `settings.section.icon` slot: the
+    // settings shell wraps every nav row's glyph in `span.navIcon` and asks
+    // that slot for the row's own icon, addressed by the section id
+    // (`renderSlot('settings.section.icon', {size, active}, {only: row.id,
+    // fallback: <shell gear>})`). A registration whose id equals the section
+    // id replaces the shell's generic gear; the shell keeps the gear as the
+    // fallback when nothing is registered.
+    //
+    // DSH <= 0.2.1 has no such slot: the shell projects only id/order/label
+    // and paints the gear as a DIRECT child of the nav button. That older DOM
+    // is handled by the legacy marker + CSS path below, which is gated on the
+    // DOM shape so the two paths can never both paint (that would show the
+    // brain AND the gear in one row).
     const SETTINGS_LABEL = "记忆管理";
+    const SETTINGS_SECTION_ID = "memory-manager";
     const SETTINGS_NAV_MARKER = "data-dsh-memory-manager-settings-nav";
 
-    function registerSettingsNavIcon(label) {
+    /**
+     * The nav glyph: Lucide "brain" (24x24, stroke 2) — the same glyph the
+     * legacy CSS mask drew, so the icon the user sees does not change with
+     * the host version. `currentColor` keeps it on the shell's native nav
+     * hover/active colors, and `size` follows the shell's 16px icon rhythm.
+     * The shell already marks the glyph span `aria-hidden`, so the SVG needs
+     * no accessible name of its own.
+     * @param {{ size?: number, active?: boolean }} props - owner props from the settings shell.
+     * @returns {import("react").ReactElement} the icon element.
+     */
+    function MemoryNavIcon(props) {
+      const p = props || {};
+      const size = typeof p.size === "number" && p.size > 0 ? p.size : 16;
+      return React.createElement(
+        "svg",
+        {
+          width: size,
+          height: size,
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          "aria-hidden": "true",
+          focusable: "false",
+        },
+        React.createElement("path", { key: "left", d: "M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" }),
+        React.createElement("path", { key: "right", d: "M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" }),
+        React.createElement("path", { key: "middle", d: "M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" }),
+      );
+    }
+
+    /**
+     * True when the nav row still uses the pre-0.2.2 shell shape: the gear is
+     * a direct <svg> child of the button. On 0.2.2+ the button's children are
+     * `span.navIcon` (glyph) + `span.navLabel`, so no direct svg child exists
+     * and the legacy path must stay off.
+     * @param {Element} button - one settings nav button.
+     * @returns {boolean} whether the legacy gear is present.
+     */
+    function hasLegacyGear(button) {
+      const children = button.children || [];
+      for (let i = 0; i < children.length; i++) {
+        const tag = children[i].tagName ? String(children[i].tagName).toLowerCase() : "";
+        if (tag === "svg") return true;
+      }
+      return false;
+    }
+
+    /**
+     * Legacy (DSH <= 0.2.1) settings nav icon: mark this plugin's own nav row
+     * so the CSS above replaces the shell's fallback gear. The disposer clears
+     * the marker for HMR / plugin disable.
+     * @param {string} label - this plugin's localized settings section label.
+     * @returns {() => void} disposer that stops observing and clears the marker.
+     */
+    function markLegacySettingsNavRow(label) {
       let disposed = false;
       const sync = function () {
         if (disposed) return;
@@ -122,7 +192,7 @@ window.__ModuleLoader__.load({
         for (let i = 0; i < buttons.length; i++) {
           const button = buttons[i];
           const text = button.textContent ? button.textContent.trim() : "";
-          if (currentLabel.length > 0 && text === currentLabel) {
+          if (currentLabel.length > 0 && text === currentLabel && hasLegacyGear(button)) {
             button.setAttribute(SETTINGS_NAV_MARKER, "");
           } else {
             button.removeAttribute(SETTINGS_NAV_MARKER);
@@ -191,9 +261,11 @@ window.__ModuleLoader__.load({
       document.head.appendChild(styleTag);
       ctx.effect(() => () => styleTag.remove());
 
-      // Mark our settings-nav row so the CSS above replaces the shell's
-      // fallback gear (no icon field exists in settings.section yet).
-      ctx.effect(() => registerSettingsNavIcon(SETTINGS_LABEL));
+      // Legacy hosts (DSH <= 0.2.1): mark our settings-nav row so the CSS
+      // above replaces the shell's fallback gear. On 0.2.2+ the row carries
+      // no direct svg child, so nothing is marked and the CSS stays inert —
+      // the icon then comes from the `settings.section.icon` slot below.
+      ctx.effect(() => markLegacySettingsNavRow(SETTINGS_LABEL));
 
       // ctx.get() reads the service without the property-accessor inject guard.
       const remote = ctx.get("remote.memoryManager");
@@ -776,8 +848,21 @@ window.__ModuleLoader__.load({
       // Settings entry: a full page under the sidebar Settings panel.
       ctx.slots.inject("settings.section", () =>
         ctx.slots.register(
-          { name: "settings.section", id: "memory-manager", order: 30, label: () => SETTINGS_LABEL },
+          { name: "settings.section", id: SETTINGS_SECTION_ID, order: 30, label: () => SETTINGS_LABEL },
           MemoryManagerPage,
+        ),
+      );
+
+      // Settings nav glyph (DSH >= 0.2.2): the shell renders every nav row's
+      // icon from this slot, addressed by the section id, and keeps its own
+      // gear as the fallback when no registration matches the row id. The
+      // registration id MUST equal the section id above, otherwise the row
+      // never renders our glyph. On older hosts the slot is not declared, the
+      // inject callback never runs, and the legacy CSS path above applies.
+      ctx.slots.inject("settings.section.icon", () =>
+        ctx.slots.register(
+          { name: "settings.section.icon", id: SETTINGS_SECTION_ID, order: 30, label: () => SETTINGS_LABEL },
+          MemoryNavIcon,
         ),
       );
     }

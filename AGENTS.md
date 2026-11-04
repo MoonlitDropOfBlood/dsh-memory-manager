@@ -51,6 +51,8 @@ dsh-memory-manager/
 
 **0.2.0 的启动闸门会静默禁用整包（v1.4.2 修复的加载根因）**：DSH 0.2.0 起 `dsh-app-boot` 在 import 任何插件代码之前对每个 bundle 跑 `evaluatePluginCompatibility`——遍历 `peerDependencies` 里名字为 `@deepseek-ai/dsh` 或以 `@deepseek-ai/dsh-` 开头的条目，逐条 `semver.satisfies(runtime, range, { includePrerelease: true })`，任一不满足就 `row.disabled = true`（stderr 一行 `skipping profile bundle ...`），插件代码一行都没被 import，现象即"加载不上"。本插件命中的 peer 是 `@deepseek-ai/dsh-typert-protocol`，范围必须写成**显式双线** `^0.1.0-rc.7 || ^0.2.0-rc.1`（注意 `^0.2.0` 不匹配 `0.2.0-rc.1`，prerelease 必须显式写 rc 线），并与顶层 `engines.dsh` 同步（dshmarket 读三声明合取）。0.2.0-rc.1 上逐面复核**全部未变**：typert codec 仍只认 `create()` 工厂（双形态继续必需）、`TypertRemoteService`/`Remote`/`remoteMethods`、cordis `Service.init`、`systemPrompt.section({name,order,text})`、`tools` 服务与 `defineTool` DSL、`exec.agent.session.header.cwd`、`settings.section` 槽（id/order/label）、`__ModuleLoader__.load` bundle 契约、`ctx.remote.$mount`、`workspaceRegistry.list()`。回归由 `npm run e2e`（`verify-real-install.mjs`）把守：真闸门 + 真安装的 cordis/typert-protocol 上激活 + 真 TypertRegistry + 真 dsh-tools 工具回路 + client bundle apply，全绿且零跳过才算数。
 
+**0.2.2 的设置壳换了导航图标的来源（v1.4.4 修复的"一行两个图标"根因）**：DSH 0.2.2-rc.1 的设置壳新增槽 `settings.section.icon`，导航行的图形不再由壳统一画通用齿轮，而是按行 id 从这个槽取（`renderSlot('settings.section.icon', { size: 16, active }, { only: row.id, fallback: <壳自带齿轮> })`）。**`settings.section` 本身仍然只投影 `id/order/label`**——图标必须单独注册，且注册 id 要等于 section id，否则该行永远只剩壳的齿轮。宿主没声明这个槽时 `ctx.slots.inject` 的回调根本不会被调用（不抛错），旧宿主天然安全；版本区间不用动（启动闸门用 `includePrerelease: true`，`^0.2.0-rc.1` 已覆盖 0.2.2-rc.1）。实现细节见第 3 节「设置导航图标」。0.2.2-rc.1 实机核验（隔离 profile + 真浏览器）：注册后「记忆管理」行只渲染插件自己的 brain 图标（壳的齿轮仅作 fallback，不再出现），旧 CSS 路径全程不给该行打标记（DOM 形状门控生效），一行只有一个图标。
+
 ### 2. Host 半：类插件 + Remote 方法
 
 ```js
@@ -72,7 +74,10 @@ export class MemoryService extends TypertRemoteService {
 - `window.__ModuleLoader__.load({ id, factory })` 格式；`exports.inject = ["slots", "remote"]`。
 - **必须自挂载** Remote 命名空间：`await ctx.remote.$mount(CLIENT_REMOTE)`（`dsh-api-remotes` 只挂载官方命名空间）；浏览器无 zod，codec 用 passthrough schema。调用走 `ctx.get("remote.memoryManager")`（不要写进 inject）。
 - **设置页**注册：`ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: "memory-manager", order: 30, label: () => SETTINGS_LABEL }, MemoryManagerPage))`。
-- **设置导航图标**：DSH 0.1.x 的 `settings.section` 只投影 `id/order/label`，设置壳对每个外部 section 统一画通用齿轮（`client-ui-settings-general` 的 `navIcon()`，没有公开图标字段）。client.js 里 `registerSettingsNavIcon(SETTINGS_LABEL)` 用 MutationObserver 给 `[role="dialog"] nav button` 中文本等于 section label 的行打 `data-dsh-memory-manager-settings-nav` 标记，CSS 再隐藏 `>svg:first-child` 齿轮、用 `currentColor` mask 画 brain Lucide 图标（16px，跟随原生 hover/active 颜色）。换图标只需替换 CSS 里 data URI 的 SVG path（Lucide，24×24，stroke-width 2，stroke 用 black——mask 只取 alpha）。
+- **设置导航图标**（宿主版本决定走哪条，两条路径**互斥**，绝不同框）：
+  - **DSH >= 0.2.2：原生槽**。0.2.2-rc.1 的设置壳（`client-ui-settings-general`）新增槽 `settings.section.icon`（`kind: 'list'` / `scope: 'root'` / `inline: true`，owner props `{ size: number, active: boolean }`），导航行图形统一渲染在 `<span class="navIcon">` 里，壳按行 id 取：`renderSlot('settings.section.icon', { size: 16, active }, { only: row.id, fallback: <壳自带齿轮> })`。注册形状 `ctx.slots.inject("settings.section.icon", () => ctx.slots.register({ name: "settings.section.icon", id: "memory-manager", order: 30, label: () => SETTINGS_LABEL }, MemoryNavIcon))`——**注册 id 必须等于 `settings.section` 的 id**（本插件两边都是 `memory-manager`）：未匹配的 id 永不渲染，壳的齿轮只是"没人注册时"的 fallback。组件 `MemoryNavIcon` 画 Lucide "brain"（24×24、stroke 2、`currentColor`，尺寸取 owner 的 `size`，默认 16），与旧 CSS mask 是同一个图形，用户看到的图标不变。
+  - **DSH <= 0.2.1：CSS 兜底**。旧宿主没有该槽（`ctx.slots.inject` 的回调不会被调用，不抛错），壳只投影 `id/order/label`，并把通用齿轮画成导航按钮的**直接 `<svg>` 子节点**。client.js 的 `markLegacySettingsNavRow()` 用 MutationObserver 给 `[role="dialog"] nav button` 中文本等于 section label、**且按钮含直接 `<svg>` 子节点**（`hasLegacyGear()`）的行打 `data-dsh-memory-manager-settings-nav` 标记，CSS 再隐藏 `>svg:first-child` 齿轮、用 `currentColor` mask 画 brain（16px，跟随原生 hover/active 颜色）。
+  - **为什么必须按 DOM 形状门控**：0.2.2 的按钮子节点是 `span.navIcon` + `span.navLabel`，没有直接 `<svg>`，所以一行都不会被标记、旧 CSS 全程失效。反过来若在 0.2.2 上还按老逻辑标记，旧规则 `button > svg:first-child` 已匹配不到（齿轮挪进了 span），自定义 brain 会**和壳齿轮同框渲染**（一行两个图标）——这正是本次修的 bug。换图标：新路径改 `MemoryNavIcon` 的 path，旧路径改 CSS 里 data URI 的 SVG path（Lucide，24×24，stroke-width 2，stroke 用 black——mask 只取 alpha）。
 - CSS 用 `document.createElement("style")` + `ctx.effect(() => () => styleTag.remove())`；颜色一律用 `--dsw-alias-*` / `--dsw-specific-*` / `--dsw-shadow-lv2`。
 
 ### 4. Remote 返回包络（重要）
@@ -147,7 +152,7 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 pnpm install           # 首次/换机必做：实体化 @deepseek-ai peer 依赖，link: 安装才能被宿主 import（见第 6 节）
 npm run check            # 语法检查全部 JS
 npm test                 # 独立核心自测（68 项断言）+ typert 双形态 codec 契约测试（281 项检查）
-npm run e2e              # 端到端：对本机真实 DSH 安装（0.2.0-rc.1）跑启动闸门/宿主激活/CRUD/真注册表/工具回路/client apply
+npm run e2e              # 端到端：对本机真实 DSH 安装（当前 0.2.2-rc.1）跑启动闸门/宿主激活/CRUD/真注册表/工具回路/client apply/导航图标槽
 dsh plugin --profile web add /path/to/dsh-memory-manager   # 安装/重装到本机 DSH profile
 dsh --profile web --dump-config    # stderr 无本包 skipping 行 = 启动闸门放行（重启前先跑这条）
 ```
