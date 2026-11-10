@@ -19,7 +19,7 @@ dsh-memory-manager/
 ├── index.js              # Host 半：MemoryService（TypertRemoteService 子类，类插件）
 ├── client.js             # Client 半：window.__ModuleLoader__.load bundle（设置「记忆管理」页 + Remote 调用）
 ├── typert.host.js        # Typert Host manifest：memoryManager Remote 服务的 schema/调用描述
-├── memory-core.mjs       # 零依赖记忆核心：frontmatter 解析/序列化、路径清洗、索引生成、ZCode 导入
+├── memory-core.mjs       # 零依赖记忆核心：frontmatter 解析/序列化、路径清洗、索引生成、ZCode 导入、生命周期（回收站/取代链/相似度/注入排序）
 ├── cordis.patch.yml      # dsh bundle patch（挂载行）
 ├── scripts/self-test.mjs # 独立核心自测：临时 DSH_HOME 上跑 CRUD/索引/导入（不依赖 DSH 进程）
 ├── scripts/test-typert-contract.mjs # typert 双形态 codec 契约测试（Host manifest + client bundle 实跑）
@@ -61,7 +61,7 @@ export class MemoryService extends TypertRemoteService {
   constructor(ctx, config) { super(ctx, "memoryManager"); }  // 必须传精确服务键
   [Service.init]() {
     markRemoteMethod(this, "list", "list");
-    // ... create / update / delete / get / importZCode
+    // ... create / update / delete / get / forget / restore / purge / importZCode / getConfig / setConfig
   }
 }
 ```
@@ -102,9 +102,13 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 - `yamlScalar`：普通标量直接输出（允许 Unicode 字母/数字、`_`、`-`、`.`、`:`、空格）；含特殊字符才 JSON 双引号包裹。**不要**用仅限 ASCII 的宽松正则，否则中文名会被无谓地加引号。
 - `parseFrontmatter`：容忍扁平 frontmatter（本项目）与 ZCode 嵌套 `metadata: { node_type, type, originSessionId }` 两种格式；description 的多行续行会合并。
 - 正文 roundtrip：写入时正文末尾补一个换行、解析时去掉首/尾空行，保证 `body` 精确往返。
-- 每次写/删记忆后重写该项目 `MEMORY.md` 索引与 `memory_summary.md`；项目记忆清空后删除整个项目目录。
+- 每次写/删记忆后重写该项目 `MEMORY.md` 索引与 `memory_summary.md`（索引行标注 pinned / superseded）；项目目录只有在「无 live 记忆 + 无 `.archive/` 归档 + 无 `.history/` 快照」时才会被清理（`cleanupProject`）。
 - `importFromZCode`：**必须跳过** `MEMORY.md` / `memory_summary.md`（它们是索引不是记忆），否则导入统计里会出现"跳过"噪音。
 - 复合 id = `<projectKey>/<name>`（两者都已被清洗、不含 `/`），客户端用它做 `get/update/delete`。
+- **写安全（v1.5）**：所有变更走 `withWriteLock`（进程内队列 + 跨进程目录锁 `<DSH_HOME>/memories/.lock`，`mkdir` 原子获取，超过 `LOCK_STALE_MS = 15s` 判定为崩溃残留可接管，`LOCK_TIMEOUT_MS = 4s` 放弃并抛 `code: "store-busy"`）；文件写走 `atomicWrite`（临时文件 + `rename`），崩溃/断电不会留下半截记忆。**`*Unlocked` 内部函数只能在已持锁的回调里用：在锁内再调 `writeMemory`/`archiveMemory` 等公开函数会自锁死（进程内队列等自己）**——正确写法是 `correctMemoryUnlocked` 内部调 `writeMemoryUnlocked`。
+- **并发冲突校验**：`writeMemory` 接受 `expectedUpdatedAt`（调用方据以决策的版本号）。磁盘上的 `updatedAt` 已变时抛 `code: "write-conflict"`（带 `current` 条目），不覆盖别人的新内容。UI 编辑会带上 `expectedUpdatedAt`，Host `update` 把它映射成 `{ ok:false, error:{ code:"stale-write" } }`；`memory_save` 自带冲突重试提示（返回 `saved:false, conflict:true`），提示模型先 `memory_get` 重读再写。
+- **扫描范围**：`listMemories`（全库）只服务 UI 列表与统计；写入后的索引重建、注入渲染一律走 `listProjectMemories` / `listProjectMemoriesSync`（只读该项目 + `global` 两个目录），否则任一项目一次写入都会 O(全库) 扫盘，注入更是每步全库扫。
+- **相似度（v1.5）**：三层信号合取——字符 bigram Dice（名称权重高）+ TF-IDF 余弦 `semanticSimilarity`（语料为当前库，名字 token 权重 ×2）+ 释义层（`cosine >= 0.30` 且描述 Dice `>= 0.55` → 记 0.74）。`SIMILAR_THRESHOLD = 0.72`（保存提示）、`DUPLICATE_THRESHOLD = 0.82`（review 疑似重复）。阈值是对真实库 2485 对校准的（无关同前缀主题最高 0.712）；**动阈值前必须重跑这个校准**，否则会给每次 memory_save 加噪音提示。
 
 ### 6. 标准安装 = dsh bundle（package.json 声明 + 包内 cordis.patch.yml）
 
@@ -125,24 +129,29 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 3. 重启 DSH。**必须重启**，Host 加载、typert 注册、client bundle 注入都在启动时发生。
 4. 卸载/切换安装形态的坑（v1.4.2 实测）：`dsh plugin remove` **必须传完整 scoped 名** `@duke-dsh-plugins/dsh-memory-manager`（传裸名 `dsh-memory-manager` 会 `ERR_PNPM_CANNOT_REMOVE_MISSING_DEPS`，因为 profile 依赖存的是 scoped 键）；profile 里已有 `link:` 依赖时，`dsh plugin add <npm 包名>` 会**保留旧 link 声明原样 upsert**（"Already up to date"，不会切到 registry）——要从开发态切到正式态必须**先 scoped remove 再 add**。registry 安装是 pnpm 硬链实体化、包内自带完整 `node_modules`（cordis/typert-protocol/zod 全在里面），与开发目录完全解耦；验证手法：profile 下 `node --input-type=module -e "await import('@duke-dsh-plugins/dsh-memory-manager')"` + `dsh --profile web --dump-config` 无 skipping 行。
 
-### 7. Agent 记忆工具 + 索引注入（v1.1）
+### 7. Agent 记忆工具 + 索引注入 + 生命周期（v1.5）
 
-**注入是索引优先的**：`buildMemoryContextSync` 默认（`config.injectBody === false`）每条记忆只注入一行 `- [type] name — description（更新于 …）`，不带正文；`injectBody: true` 恢复旧模式（附加压平后 400 字正文截断）。配置落在 `<DSH_HOME>/memories/config.json`，UI 两个开关分别对应 `autoLoad` / `injectBody`。
+**注入是索引优先的**：`buildMemoryContextSync` 默认（`config.injectBody === false`）每条记忆只注入一行 `- [type] name — description（来源, 日期[, 置顶][, 可能过时]）`，不带正文；`injectBody: true` 恢复旧模式（附加压平后 400 字正文截断）。配置落在 `<DSH_HOME>/memories/config.json`，UI 两个开关分别对应 `autoLoad` / `injectBody`。
 
-**Agent 回写回路**：`[Service.init]()` 里用 `ctx.get("tools")` 拿 ToolRuntime，**动态 `import("@deepseek-ai/dsh-tools")`** 拿 `defineTool` 后注册三个模型工具：
+**注入排序（v1.5）**：`pinned`（1000 分）> 类型权重（user 40 / feedback 34 / project 26 / reference 16 / other 10）> `useCount`（每次 `memory_get` +2，封顶 20）> 新旧（180 天线性衰减）。每节 `maxItems = 24`、总预算 6000 字符；被裁掉的条目在标题里显示「注入前 N 条」，**不会静默消失**。`status: superseded` / 归档条目**永不注入**。超过类型相关期（`TYPE_TTL_DAYS`：user 3650 / feedback 1095 / project·reference 180 / other 365，可用条目 `ttlDays` 覆盖）的非置顶条目打「可能过时」。来源标签 `manual→人工 / agent→AI / 其它→导入`——**这是让模型折价自己旧结论的关键**，别把 origin 从注入行里删掉。
+
+**Agent 回写回路**：`[Service.init]()` 里用 `ctx.get("tools")` 拿 ToolRuntime，**动态 `import("@deepseek-ai/dsh-tools")`** 拿 `defineTool` 后注册六个模型工具：
 
 | 工具 | 作用 | 关键参数 |
 |---|---|---|
-| `memory_save` | 保存/更新记忆（同名即更新，新建 `origin: "agent"`） | name / description / type(enum) / body / project? |
-| `memory_get` | 按名称读全文（配索引注入使用） | name / project? |
-| `memory_list` | 跨项目搜索（名称/描述过滤，上限 50 条，不含正文） | query? / project? |
+| `memory_save` | 保存/更新记忆（同名即更新并留 `.history` 快照；新建时返回 `similar` 相似提示；并发被改时返回 `saved:false, conflict:true` 让模型重读） | name / description / type(enum) / body / project? / pinned? |
+| `memory_get` | 按名称读全文（配索引注入使用；读取会 `touchMemory` 累加 `useCount`/`lastUsedAt`） | name / project? |
+| `memory_list` | 跨项目搜索（名称/描述过滤，上限 50 条，不含正文；**只列 active**） | query? / project? |
+| `memory_forget` | 软遗忘：移入 `.archive/` 并写 `forgotAt/forgotReason` 墓志铭，退出索引但可恢复 | name / project? / reason? |
+| `memory_correct` | 取代旧记忆：新条目记 `supersedes`，旧条目转 `status: superseded` + `supersededBy`（不再注入）；同名纠正改为原地写 + `.history` 快照 | replaces / name / description / type / body / project? / pinned? |
+| `memory_review` | 记忆体检：列出可能过时 / 长期未读 / 疑似重复（`DUPLICATE_THRESHOLD = 0.82`，语义感知）/ 已被取代的条目 | project? / limit? |
 
 要点：
 
 - **动态 import 是有意的**：`@deepseek-ai/dsh-tools` 解析失败只损失工具，不拖垮整个记忆服务。本机它从 `<DSH_HOME>/profiles/node_modules`（profile 共享依赖目录）解析。
 - `ctx.tools.register()` 返回的 disposer 由 fiber 托管，无需手动清理（同 dsh-tool-web）。
 - 工具的项目定位：`exec.agent.session.header.cwd` → `projectKeyFromPath`；模型也可显式传 `project`（`"global"` = 全局）。**cwd 拿不到就抛错**，宁可失败也不写错项目。
-- 工具指引通过第二个 `systemPrompt.section`（`name: "tool:memory"`，order 100，遵循工具指引 100-199 区间约定）常驻提示词；索引段落本身（order 90）的引导语也指向 `memory_get` / `memory_save`。
+- 工具指引通过第二个 `systemPrompt.section`（`name: "tool:memory"`，order 100，遵循工具指引 100-199 区间约定）常驻提示词；索引段落本身（order 90）的引导语也指向 `memory_get` / `memory_save` / `memory_correct` / `memory_forget` / `memory_review`。指引里明确要求「旧结论被推翻时用 memory_correct 取代、不要新开一条」，否则会重新长出一堆自相矛盾的自写记忆。
 - 工具参数/输出用 dsh-tools 的 schema DSL：string 支持 `enum`，object 必须显式 `additionalProperties`，`required: true` 逐字段标注。
 - `setConfig` Remote 只合并且显式传入的布尔字段——`undefined` 会被 JSON 丢弃导致配置悄悄回默认值。
 
@@ -151,7 +160,7 @@ Host 方法一律返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, m
 ```bash
 pnpm install           # 首次/换机必做：实体化 @deepseek-ai peer 依赖，link: 安装才能被宿主 import（见第 6 节）
 npm run check            # 语法检查全部 JS
-npm test                 # 独立核心自测（68 项断言）+ typert 双形态 codec 契约测试（281 项检查）
+npm test                 # 独立核心自测（116 项断言）+ typert 双形态 codec 契约测试（390 项检查）
 npm run e2e              # 端到端：对本机真实 DSH 安装（当前 0.2.2-rc.1）跑启动闸门/宿主激活/CRUD/真注册表/工具回路/client apply/导航图标槽
 dsh plugin --profile web add /path/to/dsh-memory-manager   # 安装/重装到本机 DSH profile
 dsh --profile web --dump-config    # stderr 无本包 skipping 行 = 启动闸门放行（重启前先跑这条）
@@ -161,9 +170,12 @@ dsh --profile web --dump-config    # stderr 无本包 skipping 行 = 启动闸�
 1. 设置 → 侧栏导航出现 **记忆管理**。
 2. 新建一条（含中文名）→ 列表出现、磁盘出现 `~/.dsh/memories/projects/<p>/memory/<name>.md` 与索引。
 3. 编辑（改名/改类型/改正文）→ 旧文件消失、新文件正确。
-4. 删除（二次确认）→ 文件与（空项目）目录被清理。
+4. 删除 → 文件移入 `<project>/.archive/`、列表消失；项目目录只有在「无 live 记忆 + 无归档 + 无历史快照」时才会被整体清理。
 5. 从 ZCode 导入 → 统计与磁盘文件一致；重复导入全部跳过。
-6. 开新会话 → agent 工具列表有 `memory_save` / `memory_get` / `memory_list`；让 agent「记住」一个偏好 → 磁盘出现新记忆且 `origin: agent`，下一轮会话索引注入里能看到它。
+6. 开新会话 → agent 工具列表有 `memory_save` / `memory_get` / `memory_list` / `memory_forget` / `memory_correct` / `memory_review`；让 agent「记住」一个偏好 → 磁盘出现新记忆且 `origin: agent`，下一轮会话索引注入里能看到它（行尾带 `（AI, 日期）`）。
+7. 在记忆管理页删除一条 → 列表消失、`<project>/.archive/` 出现带 `forgotAt` 的墓碑；点「回收站 (n)」→ 恢复回来；再「彻底删除」→ 文件才真的没了。
+8. 让 agent 纠正一个已知偏好（"不对，现在是 X"）→ 出现新记忆 `supersedes: <旧名>`，旧文件 `status: superseded` 且下一轮索引不再注入旧条目。
+9. 手动编辑一条记忆 → `<project>/.history/` 出现旧版快照（每个名字最多保留 5 份）。
 
 ## 发布
 
@@ -174,7 +186,8 @@ dsh --profile web --dump-config    # stderr 无本包 skipping 行 = 启动闸�
 - **不要直接编辑 `~/.dsh/profiles/web/cordis.yml`**（那是生成的文件，patch 覆盖在 `cordis.patch.yml`）。
 - `cordis.patch.yml` 顶层是一个 patch 数组：`- insert:` 用于新增行，`- id:` 用于覆盖已有行。
 - `client.js` 用 `require("react")`（bundle 的模块表提供），**不要** `import` 或动态插件的 `styles`/`host` 全局。
-- 删除是**永久性**的，UI 里已加二次确认。
+- 写操作**必须**走 `withWriteLock` + `atomicWrite`；新增变更函数时同时提供 `*Unlocked` 实现与持锁包装，别在锁内调用公开写函数（会自死锁）。
+- 删除默认是**软删除**：记忆移入 `<project>/.archive/`（带 `forgotAt`/`forgotReason` 墓碑），UI 可恢复；只有 `remote delete` 与回收站「彻底删除」才真的 `rm` 文件。**不要**把 UI 的删除按钮接回 `delete`，那会绕过回收站。
 - 记忆正文与描述中可能出现任意 Markdown / 特殊字符，序列化必须走 `yamlScalar`，不要手拼 YAML。
 - `typert.host.js` 的 result schema 是 **strict**：返回结构必须与 schema 完全一致（字段不缺席、类型正确），否则网关校验失败。
 - **宿主版本声明**：`package.json` 顶层 `engines.dsh`（当前 `^0.1.0-rc.7 || ^0.2.0-rc.1`，与 typert-protocol peer 同区间；两处必须同步，见第 1 节 0.2.0 闸门段落）。dshmarket 读 `manifest.engines.dsh`（顶层优先，回落 `dsh.engines.dsh`）加上 `dsh*` peerDependencies 的交集来显示「宿主要求」、驱动「适配本机 DSH 版本」过滤和安装/更新阻断；引擎区间是**严格**判定（低于下限或高于上限都算 incompatible，`includePrerelease`）。放宽/收紧支持范围时同步改这里，并用本机 dshmarket 的 `deriveHostCompatibility` 跑一遍确认 0.1.5-rc.3、0.1.7-rc.1 与 0.2.0-rc.1 都判 compatible。

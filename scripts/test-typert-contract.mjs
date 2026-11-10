@@ -100,7 +100,15 @@ assert.equal(applyError, mountSentinel, "apply() must reach ctx.remote.$mount be
 
 ok(contribution !== null, "ctx.remote.$mount must receive the CLIENT_REMOTE contribution");
 ok(contribution.package === "dsh-memory-manager", "contribution package must stay unscoped dsh-memory-manager");
-ok(Array.isArray(contribution.descriptors) && contribution.descriptors.length === 8, "contribution must declare 8 descriptors");
+ok(Array.isArray(contribution.descriptors) && contribution.descriptors.length === 11, "contribution must declare 11 descriptors");
+// Parity: the browser namespace must mirror the Host manifest exactly, otherwise
+// a method becomes reachable on one side only (silent runtime 404s).
+const hostMethods = TYPERT.invocations.map((invocation) => invocation.method).sort();
+const clientMethods = contribution.descriptors.map((descriptor) => descriptor.method).sort();
+ok(
+  JSON.stringify(hostMethods) === JSON.stringify(clientMethods),
+  `client descriptors must mirror host invocations (host=${hostMethods.join(",")} client=${clientMethods.join(",")})`,
+);
 for (const descriptor of contribution.descriptors) {
   ok(descriptor.service === "memoryManager", `${descriptor.id}: service must be memoryManager`);
   ok(descriptor.namespace === "memoryManager", `${descriptor.id}: namespace must be memoryManager`);

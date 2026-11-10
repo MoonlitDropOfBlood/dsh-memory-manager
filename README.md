@@ -23,12 +23,17 @@
 | 功能 | 说明 |
 |---|---|
 | 🧠 ZCode 记忆移植 | 沿用 ZCode 的记忆文件格式（YAML frontmatter + 正文）、类型体系（user / feedback / reference / project / other）与按项目分目录的存储布局 |
-| ⚙️ 设置中的记忆管理 | 设置面板新增 **记忆管理** 页（侧栏带 brain 图标）：搜索、项目/类型筛选、按项目分组、新建 / 编辑 / 删除（二次确认）/ 查看正文 |
-| 🔄 自动加载到对话 | 每次模型调用自动把「当前项目 + 全局」的记忆**索引**（名称 + 描述）作为系统提示注入给智能体，省上下文；也可切换为附带正文截断的旧模式 |
-| 🤖 Agent 记忆工具 | 注册 `memory_save` / `memory_get` / `memory_list` 三个模型工具：agent 可按需读取记忆全文、跨项目搜索，并在发现用户偏好 / 纠正 / 项目约定时**自己回写记忆**（同名即更新，`origin: agent`） |
+| ⚙️ 设置中的记忆管理 | 设置面板新增 **记忆管理** 页（侧栏带 brain 图标）：搜索、项目/类型筛选、按项目分组、新建 / 编辑 / 删除 / 查看正文 |
+| 🗑️ 回收站（软删除） | 删除不再永久销毁：记忆移入项目回收站并留下「遗忘原因」墓志铭，随时可恢复；只有「彻底删除」才移除文件 |
+| 🧬 记忆生命周期 | 置顶（永不被条数上限挤掉）、取代链（`memory_correct` 写新条目并把旧条目标为「已被取代」，旧文件保留可审计且不再注入）、覆盖快照（`.history/` 保留最近 5 版） |
+| 🏷️ 来源与时效标注 | 注入的索引行带来源（人工 / AI / 导入）与日期，AI 自己写下的旧结论会被明示为低证据强度；超过类型相关期（user 10 年 / feedback 3 年 / project·reference 180 天）的条目标「可能过时」 |
+| 🔍 相似记忆提示 | 新建记忆时按「名称字符相似 + TF-IDF 语义余弦 + 释义改写」三层信号检测近乎重复的旧条目（阈值用真实库 2485 对校准，不误报同前缀不同主题），提示改用 `memory_correct` |
+| 🛡️ 并发安全 | 写入走跨进程目录锁 + 原子 rename：两个会话同时改同一条记忆时，后写者收到「已被其他会话修改」冲突而不是互相覆盖；崩溃也不会留下半截文件 |
+| 🔄 自动加载到对话 | 每次模型调用自动把「当前项目 + 全局」的记忆**索引**按相关度（置顶 > 类型 > 使用次数 > 新旧）排序注入，省上下文；也可切换为附带正文截断的旧模式 |
+| 🤖 Agent 记忆工具 | 注册 `memory_save` / `memory_get` / `memory_list` / `memory_forget` / `memory_correct` / `memory_review` 六个工具：读取全文、跨项目搜索、自我纠错（取代链）、软遗忘、定期体检 |
 | 📥 从 ZCode 导入 | 一键扫描 `~/.zcode/cli/memories`（`memory/` + `topics/`），按项目 + 名称去重，不覆盖已有记忆 |
 | 🌐 全局 + 项目记忆 | `global` 项目存放跨项目记忆；项目 key 取自工作区路径名，自动清洗为安全片段 |
-| 📄 自动索引 | 每次变更自动重写 `MEMORY.md` 索引与 `memory_summary.md` 摘要 |
+| 📄 自动索引 | 每次变更自动重写 `MEMORY.md` 索引与 `memory_summary.md` 摘要（含「已被取代」标记） |
 | 🌗 主题适配 | 全部使用 DSH 设计 token（按钮为官方 DSH Button 组件），明暗主题自动跟随 |
 
 ## 安装
@@ -42,7 +47,7 @@
 dsh plugin --profile web add /path/to/dsh-memory-manager
 
 # 正式发布：从 GitHub Release tarball 安装
-dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-memory-manager/releases/download/v1.2.0/dsh-memory-manager-1.2.0.tgz
+dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-memory-manager/releases/download/v1.5.0/dsh-memory-manager-1.5.0.tgz
 ```
 
 重启 DSH 后，打开 **设置 → 记忆管理** 即可使用。
@@ -59,11 +64,13 @@ DSH 0.2.2 起设置壳把导航图标改为从 `settings.section.icon` 槽按行
 
 1. 打开 **设置**，侧栏出现 **记忆管理** 页。
 2. 列表按项目分组、最新优先；顶部可**搜索**（名称/描述）、按**项目**和**类型**筛选；卡片展示类型徽章与更新时间。
-3. **自动加载记忆到对话上下文**：默认开启。每次模型调用，DSH 会把当前会话工作区项目的记忆 + 全局记忆的**索引**（名称 + 描述，不含正文）作为系统提示注入给智能体，agent 对某条感兴趣时自行用 `memory_get` 工具读取全文——比全量注入省一个量级的上下文。需要旧行为（每条附带 400 字正文截断）可在记忆管理页打开「注入记忆正文」。
+3. **自动加载记忆到对话上下文**：默认开启。每次模型调用，DSH 会把当前会话工作区项目的记忆 + 全局记忆的**索引**（名称 + 描述 + 来源 + 日期，不含正文）按相关度排序注入给智能体，agent 对某条感兴趣时自行用 `memory_get` 工具读取全文——比全量注入省一个量级的上下文。需要旧行为（每条附带 400 字正文截断）可在记忆管理页打开「注入记忆正文」。
 4. **Agent 回写记忆**：agent 在对话中发现值得长期保留的用户偏好、纠正/反馈、项目约定时，会自己调用 `memory_save` 写入记忆（`origin: agent`），之后每轮索引自动带上它。也可在记忆管理页看到、编辑或删除这些记忆。
-5. **新建记忆**：填写名称（建议短横线 slug，可含中文）、类型、项目（`global` = 全局，或某个项目名，可参考工作区建议）、描述与 Markdown 正文。
-6. **编辑 / 查看 / 删除**：每行右侧操作；删除需二次确认（永久，不可恢复）。
-7. **从 ZCode 导入**：一键导入 `~/.zcode/cli/memories` 下各项目的记忆，同名自动跳过，结束后展示每个项目的导入/跳过统计。
+5. **并发与冲突**：如果你在设置页编辑一条记忆的同时另一个会话也改了它，保存会提示「记忆已被其他会话修改，请刷新后重试」，不会悄悄覆盖。
+6. **纠错与遗忘**：旧结论被推翻时 agent 会用 `memory_correct` 写新条目并取代旧条目（旧条目留在磁盘标记「已被取代」、不再注入）；确定无用则 `memory_forget` 移入回收站。`memory_review` 可列出过时 / 长得一样 / 已被取代的条目，相当于记忆体检。
+7. **新建记忆**：填写名称（建议短横线 slug，可含中文）、类型、项目（`global` = 全局，或某个项目名，可参考工作区建议）、描述与 Markdown 正文；可勾选「置顶」让它永远排在索引最前。
+8. **编辑 / 查看 / 删除**：每行右侧操作；编辑会自动留旧版本快照；删除只会移入**回收站**（可在侧栏「回收站 (n)」里恢复或彻底删除）。
+9. **从 ZCode 导入**：一键导入 `~/.zcode/cli/memories` 下各项目的记忆，同名自动跳过，结束后展示每个项目的导入/跳过统计。
 
 ## 工作原理
 
@@ -72,14 +79,18 @@ DSH Web UI
   └─ client.js (window.__ModuleLoader__.load bundle)
        └─ settings.section 注册「记忆管理」页
             ├─ settings.section.icon 注册侧栏 brain 图标（DSH >= 0.2.2 原生槽；旧宿主走 CSS 兜底）
-            └─ ctx.remote.memoryManager.{list|get|create|update|delete|importZCode|getConfig|setConfig}
+            └─ ctx.remote.memoryManager.{list|get|create|update|delete|forget|restore|purge|importZCode|getConfig|setConfig}
                  └─ index.js (MemoryService, TypertRemoteService)
                       ├─ systemPrompt.section（order 90）→ 每次模型调用注入「记忆索引」段落
-                      │    └─ context.agent.session.header.cwd → 项目 key → 项目 + 全局记忆索引（同步渲染，进程内缓存）
-                      ├─ ctx.tools.register → memory_save / memory_get / memory_list（agent 回写与按需读取）
+                      │    └─ context.agent.session.header.cwd → 项目 key → 项目 + 全局记忆索引
+                      │       （置顶 > 类型权重 > 使用次数 > 新旧；带来源/日期/可能过时标记）
+                      ├─ ctx.tools.register → memory_save / memory_get / memory_list /
+                      │                       memory_forget / memory_correct / memory_review
                       │    └─ systemPrompt.section（order 100）→ 工具使用指引
                       └─ memory-core.mjs（node:fs 直接读写）
                            ├─ <DSH_HOME>/memories/projects/<p>/memory/<name>.md
+                           ├─ <DSH_HOME>/memories/projects/<p>/.archive/      （回收站，优雅遗忘）
+                           ├─ <DSH_HOME>/memories/projects/<p>/.history/      （覆盖快照，保留最近 5 版）
                            ├─ <DSH_HOME>/memories/projects/<p>/MEMORY.md
                            ├─ <DSH_HOME>/memories/projects/<p>/memory_summary.md
                            └─ <DSH_HOME>/memories/config.json（autoLoad / injectBody 开关）
@@ -106,7 +117,8 @@ dsh-memory-manager/
 
 ```bash
 npm run check           # 全文件语法检查
-npm test                # 独立核心自测（临时目录 CRUD / 索引 / ZCode 导入）
+npm test                # 独立核心自测（CRUD / 索引 / ZCode 导入 / 遗忘·取代链·相似度 / 注入排序）
+npm run e2e             # 对真实 DSH 安装跑端到端（启动闸门 / Host 激活 / Remote / 工具 / client bundle）
 dsh plugin --profile web add /path/to/dsh-memory-manager   # 安装/重装到本机 DSH profile
 ```
 

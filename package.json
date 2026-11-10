@@ -1,7 +1,7 @@
 {
   "name": "@duke-dsh-plugins/dsh-memory-manager",
-  "version": "1.4.4",
-  "description": "Persistent project memory for DeepSeek Harness, ported from ZCode: ZCode-style markdown memory store (per project + global) with a full memory-management page in Settings, index-first prompt injection, agent memory tools (memory_save / memory_get / memory_list), plus one-click import from an existing ZCode memory directory.",
+  "version": "1.5.0",
+  "description": "Persistent project memory for DeepSeek Harness, ported from ZCode: ZCode-style markdown memory store (per project + global) with a full memory-management page in Settings, index-first prompt injection with provenance, an agent memory lifecycle (memory_save / memory_get / memory_list / memory_forget / memory_correct / memory_review), a restorable recycle bin, supersede chains, and one-click import from an existing ZCode memory directory.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MoonlitDropOfBlood/dsh-memory-manager.git"

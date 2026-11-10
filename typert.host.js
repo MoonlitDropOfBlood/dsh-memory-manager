@@ -29,8 +29,28 @@ const memoryItemSchema = z.object({
   origin: z.string().readonly(),
   createdAt: z.number().readonly(),
   updatedAt: z.number().readonly(),
+  status: z.string().readonly().optional(),
+  pinned: z.boolean().readonly().optional(),
+  supersedes: z.string().readonly().optional(),
+  supersededBy: z.string().readonly().optional(),
+  useCount: z.number().readonly().optional(),
+  lastUsedAt: z.number().readonly().optional(),
   body: z.string().readonly().optional(),
   size: z.number().readonly().optional(),
+}).readonly();
+
+/** One row of the project recycle bin (archived / forgotten memories). */
+const archivedItemSchema = z.object({
+  id: z.string().readonly(),
+  name: z.string().readonly(),
+  description: z.string().readonly(),
+  type: z.string().readonly(),
+  project: z.string().readonly(),
+  label: z.string().readonly(),
+  origin: z.string().readonly(),
+  archivedAt: z.number().readonly(),
+  reason: z.string().readonly(),
+  file: z.string().readonly(),
 }).readonly();
 
 const projectSummarySchema = z.object({
@@ -42,12 +62,16 @@ const projectSummarySchema = z.object({
 const statsSchema = z.object({
   total: z.number().readonly(),
   byType: z.record(z.string(), z.number()).readonly(),
+  superseded: z.number().readonly(),
+  archived: z.number().readonly(),
+  pinned: z.number().readonly(),
 }).readonly();
 
 const listValueSchema = z.object({
   items: z.array(memoryItemSchema).readonly(),
   projects: z.array(projectSummarySchema).readonly(),
   stats: statsSchema,
+  archivedItems: z.array(archivedItemSchema).readonly(),
   workspaces: z.array(z.string()).readonly(),
   types: z.array(z.string()).readonly(),
   globalProject: z.string().readonly(),
@@ -98,6 +122,28 @@ const deleteResultSchema = z.union([
   }).readonly(),
 ]);
 
+const forgetResultSchema = z.union([
+  z.object({
+    ok: z.literal(true).readonly(),
+    value: z.object({ forgotten: z.literal(true).readonly(), file: z.string().readonly() }).readonly(),
+  }).readonly(),
+  z.object({
+    ok: z.literal(false).readonly(),
+    error: errorSchema,
+  }).readonly(),
+]);
+
+const purgeResultSchema = z.union([
+  z.object({
+    ok: z.literal(true).readonly(),
+    value: z.object({ purged: z.number().readonly() }).readonly(),
+  }).readonly(),
+  z.object({
+    ok: z.literal(false).readonly(),
+    error: errorSchema,
+  }).readonly(),
+]);
+
 // ---- per-invocation parameter/result schemas -------------------------------
 
 const _memoryManager_list_parameter_0$schema = z.object({
@@ -116,6 +162,7 @@ const _memoryManager_create_parameter_0$schema = z.object({
   type: z.string().optional().readonly(),
   project: z.string().optional().readonly(),
   origin: z.string().optional().readonly(),
+  pinned: z.boolean().optional().readonly(),
   body: z.string().optional().readonly(),
 }).readonly();
 
@@ -126,11 +173,28 @@ const _memoryManager_update_parameter_0$schema = z.object({
   type: z.string().optional().readonly(),
   project: z.string().optional().readonly(),
   origin: z.string().optional().readonly(),
+  pinned: z.boolean().optional().readonly(),
+  expectedUpdatedAt: z.number().optional().readonly(),
   body: z.string().optional().readonly(),
 }).readonly();
 
 const _memoryManager_delete_parameter_0$schema = z.object({
   id: z.string().readonly(),
+}).readonly();
+
+const _memoryManager_forget_parameter_0$schema = z.object({
+  id: z.string().readonly(),
+  reason: z.string().optional().readonly(),
+}).readonly();
+
+const _memoryManager_restore_parameter_0$schema = z.object({
+  id: z.string().readonly(),
+  file: z.string().optional().readonly(),
+}).readonly();
+
+const _memoryManager_purge_parameter_0$schema = z.object({
+  id: z.string().readonly(),
+  file: z.string().optional().readonly(),
 }).readonly();
 
 const _memoryManager_importZCode_parameter_0$schema = z.object({
@@ -310,6 +374,87 @@ export const TYPERT = {
       sourceLocation: { file: "index.js", line: 1, column: 1 },
     },
     {
+      id: "dsh-memory-manager#memoryManager/forget",
+      service: "memoryManager",
+      namespace: "memoryManager",
+      method: "forget",
+      invocation: { kind: "direct" },
+      parameters: [
+        {
+          name: "request",
+          wire: "request",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: "dsh-memory-manager#MemoryManagerForgetRequest",
+            schema: _memoryManager_forget_parameter_0$schema,
+            create: () => _memoryManager_forget_parameter_0$schema,
+          },
+        },
+      ],
+      result: {
+        mode: "strict",
+        typeSymbol: "dsh-memory-manager#MemoryManagerForgetResult",
+        schema: forgetResultSchema,
+        create: () => forgetResultSchema,
+      },
+      sourceLocation: { file: "index.js", line: 1, column: 1 },
+    },
+    {
+      id: "dsh-memory-manager#memoryManager/restore",
+      service: "memoryManager",
+      namespace: "memoryManager",
+      method: "restore",
+      invocation: { kind: "direct" },
+      parameters: [
+        {
+          name: "request",
+          wire: "request",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: "dsh-memory-manager#MemoryManagerRestoreRequest",
+            schema: _memoryManager_restore_parameter_0$schema,
+            create: () => _memoryManager_restore_parameter_0$schema,
+          },
+        },
+      ],
+      result: {
+        mode: "strict",
+        typeSymbol: "dsh-memory-manager#MemoryManagerRestoreResult",
+        schema: itemResultSchema,
+        create: () => itemResultSchema,
+      },
+      sourceLocation: { file: "index.js", line: 1, column: 1 },
+    },
+    {
+      id: "dsh-memory-manager#memoryManager/purge",
+      service: "memoryManager",
+      namespace: "memoryManager",
+      method: "purge",
+      invocation: { kind: "direct" },
+      parameters: [
+        {
+          name: "request",
+          wire: "request",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: "dsh-memory-manager#MemoryManagerPurgeRequest",
+            schema: _memoryManager_purge_parameter_0$schema,
+            create: () => _memoryManager_purge_parameter_0$schema,
+          },
+        },
+      ],
+      result: {
+        mode: "strict",
+        typeSymbol: "dsh-memory-manager#MemoryManagerPurgeResult",
+        schema: purgeResultSchema,
+        create: () => purgeResultSchema,
+      },
+      sourceLocation: { file: "index.js", line: 1, column: 1 },
+    },
+    {
       id: "dsh-memory-manager#memoryManager/importZCode",
       service: "memoryManager",
       namespace: "memoryManager",
@@ -383,7 +528,7 @@ export const TYPERT = {
     services: [
       {
         description:
-          "Persistent project memory service (ported from ZCode): list, get, create, update and delete ZCode-style markdown memories, and import an existing ZCode memory directory.",
+          "Persistent project memory service (ported from ZCode): list, get, create, update and delete ZCode-style markdown memories, soft-forget them into a restorable recycle bin, import an existing ZCode memory directory, and expose the lifecycle (pinned / superseded / archived).",
         summary: "Persistent project memory service.",
         tags: [],
         jsDoc:
@@ -432,9 +577,36 @@ export const TYPERT = {
             name: "delete",
             signature:
               "@Remote('delete') async delete(request: MemoryManagerDeleteRequest): Promise<MemoryManagerDeleteResult>",
-            summary: "Permanently delete one memory by composite id.",
+            summary: "Permanently delete one memory by composite id (the UI uses forget instead).",
             jsDoc:
               "/**\n * Permanently delete one memory by composite id.\n * @param request - the composite id.\n * @returns success or a business failure.\n */",
+          },
+          {
+            kind: "method",
+            name: "forget",
+            signature:
+              "@Remote('forget') async forget(request: MemoryManagerForgetRequest): Promise<MemoryManagerForgetResult>",
+            summary: "Soft-forget one memory into the restorable recycle bin with a tombstone reason.",
+            jsDoc:
+              "/**\n * Soft-forget one memory into the restorable recycle bin.\n * @param request - the composite id plus an optional reason.\n * @returns the archived filename or a business failure.\n */",
+          },
+          {
+            kind: "method",
+            name: "restore",
+            signature:
+              "@Remote('restore') async restore(request: MemoryManagerRestoreRequest): Promise<MemoryManagerRestoreResult>",
+            summary: "Restore one archived memory back into the live index.",
+            jsDoc:
+              "/**\n * Restore one archived memory back into the live index.\n * @param request - the composite id plus an optional archive filename.\n * @returns the restored memory item.\n */",
+          },
+          {
+            kind: "method",
+            name: "purge",
+            signature:
+              "@Remote('purge') async purge(request: MemoryManagerPurgeRequest): Promise<MemoryManagerPurgeResult>",
+            summary: "Permanently purge archived tombstones of one memory name.",
+            jsDoc:
+              "/**\n * Permanently purge archived tombstones of one memory name.\n * @param request - the composite id plus an optional archive filename.\n * @returns how many archive files were removed.\n */",
           },
           {
             kind: "method",
@@ -478,17 +650,32 @@ export const TYPERT = {
           {
             name: "MemoryManagerCreateRequest",
             declaration:
-              "export interface MemoryManagerCreateRequest {\n    readonly name: string;\n    readonly description?: string;\n    readonly type?: string;\n    readonly project?: string;\n    readonly origin?: string;\n    readonly body?: string;\n}",
+              "export interface MemoryManagerCreateRequest {\n    readonly name: string;\n    readonly description?: string;\n    readonly type?: string;\n    readonly project?: string;\n    readonly origin?: string;\n    readonly pinned?: boolean;\n    readonly body?: string;\n}",
           },
           {
             name: "MemoryManagerUpdateRequest",
             declaration:
-              "export interface MemoryManagerUpdateRequest {\n    readonly id: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly type?: string;\n    readonly project?: string;\n    readonly origin?: string;\n    readonly body?: string;\n}",
+              "export interface MemoryManagerUpdateRequest {\n    readonly id: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly type?: string;\n    readonly project?: string;\n    readonly origin?: string;\n    readonly pinned?: boolean;\n    readonly body?: string;\n}",
           },
           {
             name: "MemoryManagerDeleteRequest",
             declaration:
               "export interface MemoryManagerDeleteRequest {\n    readonly id: string;\n}",
+          },
+          {
+            name: "MemoryManagerForgetRequest",
+            declaration:
+              "export interface MemoryManagerForgetRequest {\n    readonly id: string;\n    readonly reason?: string;\n}",
+          },
+          {
+            name: "MemoryManagerRestoreRequest",
+            declaration:
+              "export interface MemoryManagerRestoreRequest {\n    readonly id: string;\n    readonly file?: string;\n}",
+          },
+          {
+            name: "MemoryManagerPurgeRequest",
+            declaration:
+              "export interface MemoryManagerPurgeRequest {\n    readonly id: string;\n    readonly file?: string;\n}",
           },
           {
             name: "MemoryManagerImportZCodeRequest",
@@ -498,7 +685,7 @@ export const TYPERT = {
           {
             name: "MemoryManagerListResult",
             declaration:
-              "export type MemoryManagerListResult = { ok: true; value: { items: readonly MemoryItem[]; projects: readonly { key: string; label: string; count: number }[]; stats: { total: number; byType: Record<string, number> }; workspaces: readonly string[]; types: readonly string[]; globalProject: string } } | { ok: false; error: { code: string; message?: string } };",
+              "export type MemoryManagerListResult = { ok: true; value: { items: readonly MemoryItem[]; projects: readonly { key: string; label: string; count: number }[]; stats: { total: number; byType: Record<string, number>; superseded: number; archived: number; pinned: number }; archivedItems: readonly ArchivedItem[]; workspaces: readonly string[]; types: readonly string[]; globalProject: string } } | { ok: false; error: { code: string; message?: string } };",
           },
           {
             name: "MemoryManagerGetResult",
@@ -519,6 +706,21 @@ export const TYPERT = {
             name: "MemoryManagerDeleteResult",
             declaration:
               "export type MemoryManagerDeleteResult = { ok: true; value: { deleted: true } } | { ok: false; error: { code: string; message?: string } };",
+          },
+          {
+            name: "MemoryManagerForgetResult",
+            declaration:
+              "export type MemoryManagerForgetResult = { ok: true; value: { forgotten: true; file: string } } | { ok: false; error: { code: string; message?: string } };",
+          },
+          {
+            name: "MemoryManagerRestoreResult",
+            declaration:
+              "export type MemoryManagerRestoreResult = { ok: true; value: { item: MemoryItem } } | { ok: false; error: { code: string; message?: string } };",
+          },
+          {
+            name: "MemoryManagerPurgeResult",
+            declaration:
+              "export type MemoryManagerPurgeResult = { ok: true; value: { purged: number } } | { ok: false; error: { code: string; message?: string } };",
           },
           {
             name: "MemoryManagerImportZCodeResult",
@@ -543,7 +745,12 @@ export const TYPERT = {
           {
             name: "MemoryItem",
             declaration:
-              "export interface MemoryItem {\n    readonly id: string;\n    readonly name: string;\n    readonly description: string;\n    readonly type: string;\n    readonly project: string;\n    readonly label?: string;\n    readonly origin: string;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly body?: string;\n    readonly size?: number;\n}",
+              "export interface MemoryItem {\n    readonly id: string;\n    readonly name: string;\n    readonly description: string;\n    readonly type: string;\n    readonly project: string;\n    readonly label?: string;\n    readonly origin: string;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly status?: string;\n    readonly pinned?: boolean;\n    readonly supersedes?: string;\n    readonly supersededBy?: string;\n    readonly useCount?: number;\n    readonly lastUsedAt?: number;\n    readonly body?: string;\n    readonly size?: number;\n}",
+          },
+          {
+            name: "ArchivedItem",
+            declaration:
+              "export interface ArchivedItem {\n    readonly id: string;\n    readonly name: string;\n    readonly description: string;\n    readonly type: string;\n    readonly project: string;\n    readonly label: string;\n    readonly origin: string;\n    readonly archivedAt: number;\n    readonly reason: string;\n    readonly file: string;\n}",
           },
         ],
       },

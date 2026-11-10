@@ -19,14 +19,15 @@
  *      directory whose node_modules IS the install, so MemoryService binds to
  *      the runtime's own cordis + typert-protocol, and `[Service.init]` runs
  *      against a throwaway DSH_HOME.
- *   3. Host CRUD round trip — list/get/create/update/delete/importZCode/
- *      getConfig/setConfig through the real service class and memory-core on
+ *   3. Host CRUD + lifecycle round trip — list/get/create/update/delete/forget/
+ *      restore/purge/importZCode/getConfig/setConfig through the real service class and memory-core on
  *      the temp home (Chinese names included), files and indexes asserted.
  *   4. Real TypertRegistry — the install's registry accepts the Host manifest
  *      AND the client bundle's $mount contribution (dual-shape codec contract).
- *   5. Memory tools — the install's real `defineTool` accepts the three tool
+ *   5. Memory tools — the install's real `defineTool` accepts all six tool
  *      specs and their execute() paths round trip against the temp home with
- *      the real `exec.agent.session.header.cwd` shape.
+ *      the real `exec.agent.session.header.cwd` shape (save/get/list/forget/
+ *      correct/review).
  *   6. Client bundle — factory + apply() run clean under the real loader
  *      contract (registration id = package name, inject/apply exports,
  *      style tag lifecycle, settings.section registration shape).
@@ -252,7 +253,19 @@ async function loadHostAgainstInstall() {
   return { ...module, Service, remoteMethods, scratch };
 }
 
-const EXPECTED_REMOTE_METHODS = ["list", "get", "create", "update", "delete", "importZCode", "getConfig", "setConfig"];
+const EXPECTED_REMOTE_METHODS = [
+  "list",
+  "get",
+  "create",
+  "update",
+  "delete",
+  "forget",
+  "restore",
+  "purge",
+  "importZCode",
+  "getConfig",
+  "setConfig",
+];
 
 let host = null;
 await attempt("index.js imports against the installation's cordis/typert-protocol", async () => {
@@ -366,6 +379,65 @@ if (host) {
       if (missing.ok !== false || missing.error.code !== "not-found") throw new Error("deleted memory still readable");
       const gone = await instance.delete({ id: "global/renamed-e2e" });
       if (gone.ok !== false || gone.error.code !== "not-found") throw new Error("second delete should report not-found");
+    });
+
+    await attempt("forget → recycle bin → restore → purge round trip", async () => {
+      const created = await instance.create({
+        name: "recycle-e2e",
+        description: "回收站冒烟",
+        type: "reference",
+        project: "global",
+        body: "回收站正文",
+      });
+      if (!created.ok) throw new Error(`create failed: ${JSON.stringify(created.error)}`);
+      const forgot = await instance.forget({ id: "global/recycle-e2e", reason: "e2e forget" });
+      if (!forgot.ok || forgot.value.forgotten !== true) throw new Error(`forget failed: ${JSON.stringify(forgot)}`);
+      if (existsSync(path.join(tempHome, "memories", "projects", "global", "memory", "recycle-e2e.md"))) {
+        throw new Error("forget left the live file behind");
+      }
+      const binDir = path.join(tempHome, "memories", "projects", "global", ".archive");
+      if (!existsSync(path.join(binDir, forgot.value.file))) throw new Error("recycle bin tombstone missing");
+
+      const listed = await instance.list({});
+      if (!listed.ok || !Array.isArray(listed.value.archivedItems)) throw new Error("list must expose archivedItems");
+      if (!listed.value.archivedItems.some((a) => a.id === "global/recycle-e2e")) throw new Error("archived row missing from list");
+      if (listed.value.stats.archived !== listed.value.archivedItems.length) throw new Error("stats.archived drifted from archivedItems");
+
+      const restored = await instance.restore({ id: "global/recycle-e2e", file: forgot.value.file });
+      if (!restored.ok) throw new Error(`restore failed: ${JSON.stringify(restored.error)}`);
+      if (!existsSync(path.join(tempHome, "memories", "projects", "global", "memory", "recycle-e2e.md"))) {
+        throw new Error("restore did not recreate the live file");
+      }
+      if (existsSync(path.join(binDir, forgot.value.file))) throw new Error("restored tombstone was not consumed");
+
+      const forgottenAgain = await instance.forget({ id: "global/recycle-e2e", reason: "purge e2e" });
+      if (!forgottenAgain.ok) throw new Error(`second forget failed: ${JSON.stringify(forgottenAgain.error)}`);
+      const purged = await instance.purge({ id: "global/recycle-e2e", file: forgottenAgain.value.file });
+      if (!purged.ok || purged.value.purged !== 1) throw new Error(`purge failed: ${JSON.stringify(purged)}`);
+      const afterPurge = await instance.list({});
+      if (!afterPurge.ok || afterPurge.value.archivedItems.some((a) => a.id === "global/recycle-e2e")) {
+        throw new Error("purged tombstone still listed");
+      }
+    });
+
+    await attempt("stale write is rejected (expectedUpdatedAt → stale-write)", async () => {
+      const created = await instance.create({
+        name: "conflict-e2e",
+        description: "并发冲突冒烟",
+        type: "reference",
+        project: "global",
+        body: "v1",
+      });
+      if (!created.ok) throw new Error(`create failed: ${JSON.stringify(created.error)}`);
+      const baseVersion = created.value.item.updatedAt;
+      const first = await instance.update({ id: "global/conflict-e2e", body: "v2", expectedUpdatedAt: baseVersion });
+      if (!first.ok) throw new Error(`first update failed: ${JSON.stringify(first.error)}`);
+      const second = await instance.update({ id: "global/conflict-e2e", body: "v3", expectedUpdatedAt: baseVersion });
+      if (second.ok) throw new Error("a stale update was accepted instead of rejected");
+      if (second.error.code !== "stale-write") throw new Error(`unexpected conflict code ${second.error.code}`);
+      const reread = await instance.get({ id: "global/conflict-e2e" });
+      if (!reread.ok || !String(reread.value.item.body).includes("v2")) throw new Error("rejected write still changed the file");
+      await instance.forget({ id: "global/conflict-e2e", reason: "e2e cleanup" });
     });
   }
 }
@@ -569,8 +641,8 @@ try {
 
   if (mounted.length !== 1) throw new Error(`apply() must mount exactly one Remote contribution, got ${mounted.length}`);
   CLIENT_REMOTE = mounted[0];
-  if (!CLIENT_REMOTE || !Array.isArray(CLIENT_REMOTE.descriptors) || CLIENT_REMOTE.descriptors.length !== 8) {
-    throw new Error("CLIENT_REMOTE must carry the 8 memoryManager descriptors");
+  if (!CLIENT_REMOTE || !Array.isArray(CLIENT_REMOTE.descriptors) || CLIENT_REMOTE.descriptors.length !== 11) {
+    throw new Error("CLIENT_REMOTE must carry the 11 memoryManager descriptors");
   }
   if (dom.appended.length !== 1 || dom.appended[0].removed) throw new Error("apply() must inject exactly one live style tag");
   if (effects.length < 2) throw new Error(`apply() must register its cleanup effects, got ${effects.length}`);
@@ -627,7 +699,7 @@ console.log("\n[6] memory tools through the installation's real dsh-tools");
   if (!existsSync(toolsFile) || !host) {
     skip("dsh-tools", !existsSync(toolsFile) ? `${toolsFile} not present` : "host module unavailable");
   } else {
-    await attempt("defineTool accepts memory_save / memory_get / memory_list specs (real DSL validator)", async () => {
+    await attempt("defineTool accepts all six memory tool specs (real DSL validator)", async () => {
       const { defineTool } = await import(pathToFileURL(toolsFile).href);
       const instance = new host.MemoryService(makeCtx(), {});
       instance[host.Service.init]();
@@ -638,10 +710,10 @@ console.log("\n[6] memory tools through the installation's real dsh-tools");
       // Rebind the private registration with the real defineTool + capture.
       host.MemoryService.prototype._registerMemoryTools.call(instance, fakeTools, defineTool);
       // _registerMemoryTools reads systemPrompt via ctx — patch a ctx that has it.
-      if (registered.length !== 3) {
-        throw new Error(`expected 3 tools registered, got ${registered.length}: ${registered.map((t) => t.name).join(", ")}`);
+      if (registered.length !== 6) {
+        throw new Error(`expected 6 tools registered, got ${registered.length}: ${registered.map((t) => t.name).join(", ")}`);
       }
-      for (const expected of ["memory_save", "memory_get", "memory_list"]) {
+      for (const expected of ["memory_save", "memory_get", "memory_list", "memory_forget", "memory_correct", "memory_review"]) {
         if (!registered.some((t) => t.name === expected)) throw new Error(`tool ${expected} missing`);
       }
       const workspaceDir = path.join(tempHome, "workspace-proj");
@@ -665,6 +737,26 @@ console.log("\n[6] memory tools through the installation's real dsh-tools");
 
       const listed = await registered[2].execute({ query: "工具回路" }, exec);
       if (!listed || listed.total !== 1 || listed.items.length !== 1) throw new Error(`memory_list returned ${JSON.stringify(listed)}`);
+
+      const forgotten = await registered[3].execute({ name: "tool-e2e", reason: "e2e forget" }, exec);
+      if (!forgotten || forgotten.forgotten !== true) throw new Error(`memory_forget returned ${JSON.stringify(forgotten)}`);
+      if (!existsSync(path.join(tempHome, "memories", "projects", "workspace-proj", ".archive"))) {
+        throw new Error("memory_forget did not move the memory into the recycle bin");
+      }
+
+      await registered[0].execute({ name: "tool-old", description: "旧结论", type: "user", body: "V1" }, exec);
+      const corrected = await registered[4].execute(
+        { replaces: "tool-old", name: "tool-new", description: "新结论", type: "user", body: "V2" },
+        exec,
+      );
+      if (!corrected || corrected.corrected !== true || corrected.replaced !== "tool-old") {
+        throw new Error(`memory_correct returned ${JSON.stringify(corrected)}`);
+      }
+
+      const review = await registered[5].execute({}, exec);
+      if (!review || typeof review.count !== "number" || !Array.isArray(review.items)) {
+        throw new Error(`memory_review returned ${JSON.stringify(review)}`);
+      }
     });
   }
 }

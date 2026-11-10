@@ -64,6 +64,11 @@ window.__ModuleLoader__.load({
 .mm-t-reference{background:rgba(62,207,142,.15);color:#2fb37d}
 .mm-t-project{background:rgba(167,139,250,.15);color:#9b7ff0}
 .mm-t-other{background:rgba(128,128,128,.14);color:var(--dsw-alias-label-secondary)}
+.mm-st-superseded{background:rgba(128,128,128,.16);color:var(--dsw-alias-label-secondary)}
+.mm-st-pinned{background:rgba(245,185,66,.18);color:#c98a12}
+.mm-origin{font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary)}
+.mm-archive-banner{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.mm-archive-banner strong{color:var(--dsw-alias-label-primary);font-weight:600}
 .mm-row-actions{display:flex;gap:4px;flex:none;align-items:center}
 .mm-act{border:none;background:transparent;color:var(--dsw-alias-brand-primary,#4a7dff);font-size:12px;line-height:18px;padding:4px 8px;border-radius:7px;cursor:pointer;white-space:nowrap}
 .mm-act:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12))}
@@ -246,6 +251,9 @@ window.__ModuleLoader__.load({
         method("create", ["request"]),
         method("update", ["request"]),
         method("delete", ["request"]),
+        method("forget", ["request"]),
+        method("restore", ["request"]),
+        method("purge", ["request"]),
         method("importZCode", ["request"]),
         method("getConfig", []),
         method("setConfig", ["request"]),
@@ -288,6 +296,14 @@ window.__ModuleLoader__.load({
       const TYPE_LABEL = { user: "用户", feedback: "反馈", reference: "参考", project: "项目", other: "其他" };
       const TYPE_CLASS = { user: "mm-t-user", feedback: "mm-t-feedback", reference: "mm-t-reference", project: "mm-t-project", other: "mm-t-other" };
 
+      /** Provenance label: a memory the model wrote itself must not look like a user fact. */
+      function originLabel(origin) {
+        const value = String(origin || "manual").toLowerCase();
+        if (value === "manual" || value === "user") return "人工";
+        if (value === "agent" || value === "ai") return "AI";
+        return "导入";
+      }
+
       function fmtTime(ts) {
         if (typeof ts !== "number" || !isFinite(ts) || ts <= 0) return "";
         const diff = Date.now() - ts;
@@ -309,6 +325,7 @@ window.__ModuleLoader__.load({
         const [description, setDescription] = React.useState(props.initial.description || "");
         const [type, setType] = React.useState(props.initial.type || "reference");
         const [project, setProject] = React.useState(props.initial.project || props.data.globalProject || "global");
+        const [pinned, setPinned] = React.useState(!!props.initial.pinned);
         const [body, setBody] = React.useState(props.initial.body || "");
         const projectOptions = [];
         if (props.data) {
@@ -361,6 +378,16 @@ window.__ModuleLoader__.load({
                   className: "mm-input", value: description,
                   onChange: (e) => setDescription(e.target.value),
                 })),
+              React.createElement(
+                "label", { className: "mm-toggle" },
+                React.createElement("input", {
+                  type: "checkbox",
+                  checked: pinned,
+                  onChange: (e) => setPinned(e.target.checked),
+                }),
+                React.createElement("span", null, "置顶"),
+                React.createElement("span", { className: "mm-toggle-hint" }, "注入索引时排在最前，不会被条数上限挤掉")
+              ),
               field("内容（Markdown）",
                 React.createElement("textarea", {
                   className: "mm-textarea", value: body,
@@ -372,7 +399,7 @@ window.__ModuleLoader__.load({
               React.createElement(ui.Button, { variant: "ghost", size: "sm", onClick: props.onClose }, "取消"),
               React.createElement(ui.Button, {
                 variant: "primary", size: "sm", disabled: props.busy || !name.trim(),
-                onClick: () => props.onSave({ name, description, type, project, body }),
+                onClick: () => props.onSave({ name, description, type, project, pinned, body }),
               }, props.busy ? "保存中…" : "保存")
             )
           )
@@ -397,7 +424,14 @@ window.__ModuleLoader__.load({
                 React.createElement("span", { className: "mm-badge " + (TYPE_CLASS[item.type] || "mm-t-other") }, TYPE_LABEL[item.type] || item.type),
                 React.createElement("span", null, "项目: " + (item.label || item.project)),
                 React.createElement("span", null, "更新于 " + fmtTime(item.updatedAt)),
-                item.origin && item.origin !== "manual" ? React.createElement("span", null, "来源: " + item.origin) : null
+                React.createElement("span", { className: "mm-origin" }, "来源: " + originLabel(item.origin)),
+                item.pinned ? React.createElement("span", { className: "mm-badge mm-st-pinned" }, "置顶") : null,
+                item.status && item.status !== "active"
+                  ? React.createElement("span", { className: "mm-badge mm-st-superseded" },
+                      item.supersededBy ? "已被 " + item.supersededBy + " 取代" : "已被取代")
+                  : null,
+                item.supersedes ? React.createElement("span", { className: "mm-origin" }, "取代了: " + item.supersedes) : null,
+                item.useCount ? React.createElement("span", { className: "mm-origin" }, "读取 " + item.useCount + " 次") : null
               ),
               item.description ? React.createElement("div", { className: "mm-import-line" }, item.description) : null,
               React.createElement("div", { className: "mm-detail-body" }, item.body || "（空）")
@@ -470,6 +504,8 @@ window.__ModuleLoader__.load({
         const [typeFilter, setTypeFilter] = React.useState("all");
         const [busy, setBusy] = React.useState(false);
         const [confirming, setConfirming] = React.useState(null);
+        const [showArchived, setShowArchived] = React.useState(false);
+        const [purging, setPurging] = React.useState(null); // "id|file" awaiting purge confirmation
         const [editing, setEditing] = React.useState(null); // { id?, ... } form state
         const [viewing, setViewing] = React.useState(null); // item
         const [importing, setImporting] = React.useState(false); // modal open
@@ -543,6 +579,16 @@ window.__ModuleLoader__.load({
           });
         }, [data, query, projectFilter, typeFilter]);
 
+        const archivedFiltered = React.useMemo(() => {
+          if (!data) return [];
+          const q = query.trim().toLowerCase();
+          return (data.archivedItems || []).filter((a) => {
+            if (projectFilter !== "all" && a.project !== projectFilter) return false;
+            if (q && a.name.toLowerCase().indexOf(q) === -1 && String(a.description || "").toLowerCase().indexOf(q) === -1) return false;
+            return true;
+          });
+        }, [data, query, projectFilter]);
+
         const grouped = React.useMemo(() => {
           const map = new Map();
           for (const m of filtered) {
@@ -562,15 +608,17 @@ window.__ModuleLoader__.load({
           return groups;
         }, [filtered, data]);
 
-        const runAction = async (action, id) => {
+        const runRemoteAction = async (action, payload) => {
           setBusy(true);
           setError(null);
           try {
-            const res = await remote[action]({ id });
+            const res = await remote[action](payload);
             const out = unwrap(res);
             if (!out.ok) {
               setError((out.error && (out.error.message || out.error.code)) || "操作失败");
             } else {
+              setConfirming(null);
+              setPurging(null);
               await refresh();
             }
           } catch (e) {
@@ -579,6 +627,8 @@ window.__ModuleLoader__.load({
             setBusy(false);
           }
         };
+
+        const runAction = (action, id) => runRemoteAction(action, { id });
 
         const openView = async (id) => {
           setBusy(true);
@@ -595,6 +645,34 @@ window.__ModuleLoader__.load({
           }
         };
 
+        /**
+         * Load the full memory before opening the edit form. The list payload
+         * carries no body, so opening the form straight from a row would save
+         * an empty body and silently destroy the content.
+         */
+        const startEdit = async (id) => {
+          setBusy(true);
+          setError(null);
+          try {
+            const res = await remote.get({ id });
+            const out = unwrap(res);
+            if (out.ok && out.value && out.value.item) {
+              const it = out.value.item;
+              setEditing({
+                id: it.id, name: it.name, description: it.description, type: it.type,
+                project: it.project, pinned: Boolean(it.pinned), body: it.body || "",
+                updatedAt: it.updatedAt,
+              });
+            } else {
+              setError((out.error && (out.error.message || out.error.code)) || "读取记忆失败");
+            }
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        };
+
         const submitForm = async (fields) => {
           setBusy(true);
           setError(null);
@@ -604,10 +682,14 @@ window.__ModuleLoader__.load({
               description: fields.description,
               type: fields.type,
               project: fields.project || (data && data.globalProject) || "global",
+              pinned: fields.pinned === true,
               body: fields.body,
             };
+            // Carry the version this edit was based on, so a concurrent edit
+            // from another session fails loud instead of being overwritten.
+            const baseVersion = editing && editing.updatedAt ? { expectedUpdatedAt: editing.updatedAt } : {};
             const res = editing && editing.id
-              ? await remote.update(Object.assign({ id: editing.id }, payload))
+              ? await remote.update(Object.assign({ id: editing.id }, baseVersion, payload))
               : await remote.create(payload);
             const out = unwrap(res);
             if (!out.ok) {
@@ -648,12 +730,13 @@ window.__ModuleLoader__.load({
         const statsCards = data ? (function () {
           const s = data.stats;
           const cards = [
-            { label: "记忆总数", value: String(s.total) },
+            { label: "有效记忆", value: String(s.total) },
             { label: "用户", value: String(s.byType.user || 0) },
             { label: "反馈", value: String(s.byType.feedback || 0) },
             { label: "参考", value: String(s.byType.reference || 0) },
             { label: "项目", value: String(s.byType.project || 0) },
-            { label: "其他", value: String(s.byType.other || 0) },
+            { label: "已被取代", value: String(s.superseded || 0) },
+            { label: "回收站", value: String(s.archived || 0) },
           ];
           return React.createElement(
             "div", { className: "mm-stats" },
@@ -707,6 +790,51 @@ window.__ModuleLoader__.load({
             React.createElement("span", { className: "mm-spinner", "aria-hidden": true }),
             React.createElement("span", null, "正在加载记忆…")
           );
+        } else if (showArchived) {
+          if (archivedFiltered.length === 0) {
+            body = React.createElement("div", { className: "mm-empty" },
+              "回收站是空的。删除记忆时它只会被移到这里，随时可以恢复。");
+          } else {
+            body = React.createElement(
+              "div", { className: "mm-body" },
+              React.createElement("div", { className: "mm-archive-banner" },
+                "回收站：删除的记忆会保留在这里，可随时恢复；只有「彻底删除」才真正移除文件。"),
+              archivedFiltered.map((a) => {
+                const purgeKey = a.id + "|" + a.file;
+                const isPurgeConfirm = purging === purgeKey;
+                return React.createElement(
+                  "div", { className: "mm-row", key: purgeKey },
+                  React.createElement(
+                    "div", { className: "mm-row-main" },
+                    React.createElement("div", { className: "mm-row-title" }, a.name),
+                    React.createElement("div", { className: "mm-row-desc" }, a.description || "（无描述）"),
+                    React.createElement(
+                      "div", { className: "mm-row-meta" },
+                      React.createElement("span", { className: "mm-badge " + (TYPE_CLASS[a.type] || "mm-t-other") }, TYPE_LABEL[a.type] || a.type),
+                      React.createElement("span", null, (a.label || a.project) + " · 归档于 " + fmtTime(a.archivedAt)),
+                      a.reason ? React.createElement("span", { className: "mm-origin" }, "原因: " + a.reason) : null
+                    )
+                  ),
+                  React.createElement(
+                    "div", { className: "mm-row-actions" },
+                    React.createElement("button", {
+                      className: "mm-act",
+                      disabled: busy,
+                      onClick: () => runRemoteAction("restore", { id: a.id, file: a.file }),
+                    }, "恢复"),
+                    React.createElement("button", {
+                      className: "mm-act mm-act-danger",
+                      disabled: busy,
+                      onClick: () => {
+                        if (isPurgeConfirm) runRemoteAction("purge", { id: a.id, file: a.file });
+                        else setPurging(purgeKey);
+                      },
+                    }, isPurgeConfirm ? "确认彻底删除?" : "彻底删除")
+                  )
+                );
+              })
+            );
+          }
         } else if (data.items.length === 0) {
           body = React.createElement("div", { className: "mm-empty" }, "还没有记忆。点击右上角「新建记忆」，或「从 ZCode 导入」把 ZCode 的记忆搬过来。");
         } else if (grouped.length === 0) {
@@ -734,7 +862,12 @@ window.__ModuleLoader__.load({
                         "div", { className: "mm-row-meta" },
                         React.createElement("span", { className: "mm-badge " + (TYPE_CLASS[m.type] || "mm-t-other") }, TYPE_LABEL[m.type] || m.type),
                         React.createElement("span", null, "更新于 " + fmtTime(m.updatedAt)),
-                        m.origin && m.origin !== "manual" ? React.createElement("span", null, m.origin) : null
+                        React.createElement("span", { className: "mm-origin" }, originLabel(m.origin)),
+                        m.pinned ? React.createElement("span", { className: "mm-badge mm-st-pinned" }, "置顶") : null,
+                        m.status === "superseded"
+                          ? React.createElement("span", { className: "mm-badge mm-st-superseded" },
+                              m.supersededBy ? "已被 " + m.supersededBy + " 取代" : "已被取代")
+                          : null
                       )
                     ),
                     React.createElement(
@@ -743,16 +876,16 @@ window.__ModuleLoader__.load({
                       React.createElement("button", {
                         className: "mm-act",
                         disabled: busy,
-                        onClick: () => setEditing({ id: m.id, name: m.name, description: m.description, type: m.type, project: m.project, body: "" }),
+                        onClick: () => startEdit(m.id),
                       }, "编辑"),
                       React.createElement("button", {
                         className: "mm-act mm-act-danger",
                         disabled: busy,
                         onClick: () => {
-                          if (isConfirm) { setConfirming(null); runAction("delete", m.id); }
+                          if (isConfirm) { setConfirming(null); runRemoteAction("forget", { id: m.id, reason: "从设置页移入回收站" }); }
                           else setConfirming(m.id);
                         },
-                      }, isConfirm ? "确认删除?" : "删除")
+                      }, isConfirm ? "移到回收站?" : "删除")
                     )
                   );
                 })
@@ -763,12 +896,17 @@ window.__ModuleLoader__.load({
 
         const head = React.createElement(
           "div", { className: "mm-head" },
-          React.createElement("div", { className: "mm-head-title" }, "记忆管理"),
+          React.createElement("div", { className: "mm-head-title" }, showArchived ? "记忆管理 · 回收站" : "记忆管理"),
           React.createElement(
             "div", { className: "mm-head-actions" },
             React.createElement(ui.Button, { variant: "ghost", size: "sm", onClick: () => refresh(), disabled: busy }, "刷新"),
-            React.createElement(ui.Button, { variant: "primary", size: "sm", onClick: () => setEditing({}), disabled: busy }, "新建记忆"),
             React.createElement(ui.Button, {
+              variant: "ghost", size: "sm",
+              onClick: () => { setShowArchived(!showArchived); setConfirming(null); setPurging(null); },
+              disabled: busy,
+            }, showArchived ? "返回记忆列表" : "回收站 (" + ((data && data.stats && data.stats.archived) || 0) + ")"),
+            showArchived ? null : React.createElement(ui.Button, { variant: "primary", size: "sm", onClick: () => setEditing({}), disabled: busy }, "新建记忆"),
+            showArchived ? null : React.createElement(ui.Button, {
               variant: "outline", size: "sm",
               onClick: () => { setImportResult(null); setImportSource(""); setImporting(true); },
               disabled: busy,
@@ -795,7 +933,11 @@ window.__ModuleLoader__.load({
             onEdit: () => {
               const v = viewing;
               setViewing(null);
-              setEditing({ id: v.id, name: v.name, description: v.description, type: v.type, project: v.project, body: v.body });
+              setEditing({
+                id: v.id, name: v.name, description: v.description, type: v.type,
+                project: v.project, pinned: Boolean(v.pinned), body: v.body,
+                updatedAt: v.updatedAt,
+              });
             },
           }));
         }
@@ -815,7 +957,10 @@ window.__ModuleLoader__.load({
           "div", { className: "mm-page" },
           head,
           React.createElement("div", { className: "mm-status" },
-            data ? "共 " + data.items.length + " 条记忆 · " + (data.projects.length || 0) + " 个项目" : ""),
+            data
+              ? "共 " + data.items.length + " 条记忆 · " + (data.projects.length || 0) + " 个项目" +
+                ((data.stats && data.stats.archived) ? " · 回收站 " + data.stats.archived + " 条" : "")
+              : ""),
           React.createElement(
             "label", { className: "mm-toggle" },
             React.createElement("input", {

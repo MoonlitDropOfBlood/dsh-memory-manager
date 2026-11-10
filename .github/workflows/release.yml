@@ -94,14 +94,24 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            DeepSeek Harness 持久化记忆插件：ZCode 风格项目记忆 + 设置「记忆管理」页 + 索引式记忆注入 + agent 记忆工具（memory_save / memory_get / memory_list）+ ZCode 一键导入。
+            DeepSeek Harness 持久化记忆插件：ZCode 风格项目记忆 + 设置「记忆管理」页 + 索引式记忆注入 + agent 记忆生命周期工具 + ZCode 一键导入。
 
-            ### 🆕 v1.4.4
-            - 修 DSH 0.2.2-rc.1 设置导航的「一行两个图标」：设置壳新增 `settings.section.icon` 槽，并把通用齿轮挪进 `span.navIcon`，旧的 `button > svg:first-child` 规则再也匹配不到齿轮 —— 壳的齿轮与插件自定义 brain 同框渲染。本版改为**原生注册该槽**（注册 id 与 `settings.section` 的 id 同为 `memory-manager`），DSH ≤ 0.2.1 的 CSS 兜底保留但按 DOM 形状门控，两条路径互斥、绝不同框。
-            - 已在 DSH 0.2.2-rc.1 实机核验（隔离 profile + 真浏览器）：「记忆管理」行只渲染插件自己的 brain 图标。
+            ### 🆕 v1.5.0 — 记忆生命周期与写安全
+            - **回收站（软删除）**：删除不再永久销毁，「删除」= 移入 `<project>/.archive/`（带 `forgotAt`/`forgotReason` 墓志铭），可在「记忆管理 → 回收站 (n)」恢复；只有「彻底删除」才移除文件。
+            - **取代链（纠错）**：新增 `memory_correct` 工具 —— 新条目记 `supersedes`，旧条目转 `status: superseded` + `supersededBy`（留在磁盘可审计、不再注入索引）；同名原地纠正会把旧版快照进 `<project>/.history/`（每名最多 5 份）。
+            - **来源与时效标注**：注入行变为 `- [type] name — desc（人工/AI/导入, 日期[, 置顶][, 可能过时]）`，模型能折价自己写下的旧结论；超过类型相关期（user 10 年 / feedback 3 年 / project·reference 180 天）且非置顶的条目标「可能过时」。
+            - **注入排序与预算**：置顶 > 类型权重 > 使用次数（`memory_get` 命中累加）> 新旧；每节 24 条 / 6000 字符，被裁掉的在标题显示「注入前 N 条」，不再静默丢记忆。
+            - **相似记忆提示**：新建时按「名称字符 bigram + TF-IDF 语义余弦 + 释义改写」三层检测近重复（阈值用真实库 2485 对校准），提示改用 `memory_correct`。
+            - **agent 工具 3 → 6**：`memory_save` / `memory_get` / `memory_list` / `memory_forget` / `memory_correct` / `memory_review`（体检：过时 / 长期未读 / 疑似重复 / 已被取代）。
+            - **写安全**：所有变更走跨进程目录锁（`<DSH_HOME>/memories/.lock`，崩溃残留 15s 可接管）+ 原子 `rename`；`expectedUpdatedAt` 版本校验让并发编辑收到「已被其他会话修改」而不是互相覆盖。
+            - **性能**：写入后的索引重建与注入渲染改为只扫「当前项目 + global」，不再 O(全库)。
+            - **修复**：列表行点「编辑」曾以空正文打开表单，保存会清空记忆正文 —— 现在先读取全文，并配合 `.history` 快照双保险。
+            - **Remote 8 → 11**：新增 `forget` / `restore` / `purge`，typert schema、client 描述符与契约测试同步。
+            - **兼容性**：旧记忆文件无需迁移（无 `status` 视为 active，未写入的生命周期字段保持原格式）；回滚到 v1.4.x 会丢掉生命周期标注，但正文与索引仍可读。
+            - **验证**：核心自测 116 项断言、typert 契约 390 项检查、`npm run e2e` 对真实 DSH 0.2.2-rc.1 全绿（含回收站回路与 stale-write 冲突）。
 
-            ### 📦 前一版 v1.4.2
-            - 兼容 DSH 0.2.0（0.2.0 起宿主按 `peerDependencies` 的 `@deepseek-ai/dsh*` 声明做启动预检，范围不满足的 bundle 会被静默跳过；本版显式放行 0.1.0-rc.7 ~ 0.2.0-rc.x，并新增对真实安装的端到端验证 `npm run e2e`）。
+            ### 📦 前一版 v1.4.4
+            - 修 DSH 0.2.2-rc.1 设置导航的「一行两个图标」：改走原生 `settings.section.icon` 槽，DSH ≤ 0.2.1 的 CSS 兜底保留并按 DOM 形状门控，两条路径互斥。
 
             ### 📦 安装（标准 DSH bundle）
             ```bash
